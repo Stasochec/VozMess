@@ -163,6 +163,7 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- 7. ФУНКЦИИ ПРОВЕРКИ НИКНЕЙМА И ВХОДА (RPC)
+DROP FUNCTION IF EXISTS public.check_username_available(TEXT);
 CREATE OR REPLACE FUNCTION public.check_username_available(check_username TEXT)
 RETURNS BOOLEAN AS $$
 DECLARE
@@ -178,6 +179,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.check_username_available(TEXT) TO anon, authenticated;
 
+DROP FUNCTION IF EXISTS public.get_email_by_username(TEXT);
 CREATE OR REPLACE FUNCTION public.get_email_by_username(p_username TEXT)
 RETURNS TEXT AS $$
 DECLARE
@@ -279,6 +281,7 @@ CREATE TRIGGER tr_cleanup_message_storage
   FOR EACH ROW EXECUTE FUNCTION public.cleanup_message_storage();
 
 -- 10. RPC «ПАНЕЛИ БОГА»: ГЛОБАЛЬНЫЙ АНОНС ВО ВСЕ ЧАТЫ
+DROP FUNCTION IF EXISTS public.broadcast_god_announcement(TEXT);
 CREATE OR REPLACE FUNCTION public.broadcast_god_announcement(announcement_text TEXT)
 RETURNS VOID AS $$
 DECLARE
