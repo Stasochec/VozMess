@@ -13,6 +13,7 @@ interface ChatState {
   searchQuery: string;
   activeFilter: 'all' | 'direct' | 'group' | 'channel';
   realtimeSubscription: RealtimeChannel | null;
+  activeChatChannel: RealtimeChannel | null;
 
   setActiveChatId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
@@ -27,6 +28,10 @@ interface ChatState {
   broadcastAnnouncement: (text: string) => Promise<{ success: boolean; error?: string }>;
   subscribeToRealtime: () => void;
   unsubscribeFromRealtime: () => void;
+  subscribeToChatMessages: (chatId: string) => void;
+  unsubscribeFromChatMessages: () => void;
+  addRealtimeMessage: (message: Message) => void;
+  removeRealtimeMessage: (messageId: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -38,8 +43,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   searchQuery: '',
   activeFilter: 'all',
   realtimeSubscription: null,
+  activeChatChannel: null,
 
   setActiveChatId: (id) => {
+    const prevId = get().activeChatId;
+    if (prevId !== id) {
+      get().unsubscribeFromChatMessages();
+    }
     set({ activeChatId: id });
     if (id) {
       get().fetchMessages(id);
@@ -373,34 +383,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().unsubscribeFromRealtime();
 
     const channel = supabase
-      .channel('vozduxan_realtime_stream')
+      .channel('vozduxan_global_stream')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
         async (payload) => {
           const newMsg = payload.new as Message;
-          const { activeChatId } = get();
 
-          // Fetch sender profile info
+          // Fetch sender profile info for sidebar preview
           const { data: senderProfile } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', newMsg.sender_id)
-            .single();
+            .maybeSingle();
 
           const populatedMsg: Message = {
             ...newMsg,
             sender: senderProfile || undefined,
           };
 
-          if (activeChatId && newMsg.chat_id === activeChatId) {
-            set((state) => {
-              if (state.messages.some((m) => m.id === newMsg.id)) return state;
-              return { messages: [...state.messages, populatedMsg] };
-            });
-          }
-
-          // Update last message in chat list
+          // Update sidebar chat list
           set((state) => ({
             chats: state.chats.map((c) =>
               c.id === newMsg.chat_id
@@ -415,9 +417,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         { event: 'DELETE', schema: 'public', table: 'messages' },
         (payload) => {
           const deletedId = payload.old.id;
-          set((state) => ({
-            messages: state.messages.filter((m) => m.id !== deletedId),
-          }));
+          get().removeRealtimeMessage(deletedId);
         }
       )
       .subscribe();
@@ -431,5 +431,109 @@ export const useChatStore = create<ChatState>((set, get) => ({
       supabase.removeChannel(realtimeSubscription);
       set({ realtimeSubscription: null });
     }
+  },
+
+  subscribeToChatMessages: (chatId: string) => {
+    if (!isSupabaseConfigured() || !chatId) return;
+
+    // Перед подпиской на новый чат отписываемся от предыдущего канала:
+    const currentChannel = get().activeChatChannel;
+    if (currentChannel) {
+      supabase.removeChannel(currentChannel);
+      set({ activeChatChannel: null });
+    }
+
+    const channelName = `chat_room_${chatId}_${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `chat_id=eq.${chatId}`,
+        },
+        async (payload) => {
+          const newMsg = payload.new as Message;
+          if (newMsg.chat_id !== chatId) return;
+
+          const { data: senderProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', newMsg.sender_id)
+            .maybeSingle();
+
+          const populatedMsg: Message = {
+            ...newMsg,
+            sender: senderProfile || undefined,
+          };
+
+          get().addRealtimeMessage(populatedMsg);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'messages',
+          filter: `chat_id=eq.${chatId}`,
+        },
+        (payload) => {
+          get().removeRealtimeMessage(payload.old.id);
+        }
+      )
+      .subscribe();
+
+    set({ activeChatChannel: channel });
+  },
+
+  unsubscribeFromChatMessages: () => {
+    const currentChannel = get().activeChatChannel;
+    if (currentChannel) {
+      supabase.removeChannel(currentChannel);
+      set({ activeChatChannel: null });
+    }
+  },
+
+  addRealtimeMessage: (newMsg: Message) => {
+    set((state) => {
+      // Исключаем дублирование: если такое сообщение уже есть в стейте
+      if (state.messages.some((m) => m.id === newMsg.id)) {
+        return state;
+      }
+
+      // Проверяем, не заменяет ли это оптимистичное сообщение
+      const optimisticIndex = state.messages.findIndex(
+        (m) =>
+          m.id.startsWith('temp-') &&
+          m.sender_id === newMsg.sender_id &&
+          m.chat_id === newMsg.chat_id &&
+          (m.content === newMsg.content || m.media_url === newMsg.media_url)
+      );
+
+      let nextMessages = [...state.messages];
+      if (optimisticIndex !== -1) {
+        nextMessages[optimisticIndex] = newMsg;
+      } else {
+        nextMessages.push(newMsg);
+      }
+
+      return {
+        messages: nextMessages,
+        chats: state.chats.map((c) =>
+          c.id === newMsg.chat_id
+            ? { ...c, last_message: newMsg, updated_at: newMsg.created_at }
+            : c
+        ),
+      };
+    });
+  },
+
+  removeRealtimeMessage: (messageId: string) => {
+    set((state) => ({
+      messages: state.messages.filter((m) => m.id !== messageId),
+    }));
   },
 }));

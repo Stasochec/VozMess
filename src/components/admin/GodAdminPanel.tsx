@@ -12,6 +12,7 @@ import {
   X,
   Edit3,
   Flame,
+  MailCheck,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
@@ -29,6 +30,13 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   const { profile } = useAuthStore();
   const { broadcastAnnouncement } = useChatStore();
 
+  // 1. STRICT GUARD: Physical return null if not @stasochec with owner role
+  if (profile?.role !== 'owner' || profile?.username?.toLowerCase() !== 'stasochec') {
+    return null;
+  }
+
+  if (!isOpen) return null;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [targetUser, setTargetUser] = useState<Profile | null>(null);
@@ -36,34 +44,14 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   const [searchError, setSearchError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Manual Email Confirmation state
+  const [confirmEmailInput, setConfirmEmailInput] = useState('');
+  const [isConfirmingEmail, setIsConfirmingEmail] = useState(false);
+  const [confirmEmailError, setConfirmEmailError] = useState<string | null>(null);
+
   // Broadcast state
   const [broadcastText, setBroadcastText] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
-
-  if (!isOpen) return null;
-
-  // Strict God check: only @stasochec with owner role
-  const isGod = profile?.role === 'owner' && profile?.username?.toLowerCase() === 'stasochec';
-
-  if (!isGod) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-        <div className="w-full max-w-md bg-[#16161C] border border-rose-500/30 rounded-2xl p-6 text-center text-zinc-100">
-          <AlertTriangle className="w-12 h-12 text-rose-500 mx-auto mb-3" />
-          <h3 className="font-extrabold text-base text-rose-400">Доступ заблокирован</h3>
-          <p className="text-xs text-zinc-400 mt-2">
-            «Панель Бога» доступна исключительно создателю с никнеймом @stasochec.
-          </p>
-          <button
-            onClick={onClose}
-            className="mt-4 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-xs font-bold rounded-lg text-white"
-          >
-            Закрыть
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   const showNotification = (msg: string) => {
     setSuccessMessage(msg);
@@ -184,6 +172,33 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
       }
     } finally {
       setIsBroadcasting(false);
+    }
+  };
+
+  const handleConfirmEmail = async (target?: string) => {
+    const val = (target || confirmEmailInput).trim();
+    if (!val) return;
+
+    setIsConfirmingEmail(true);
+    setConfirmEmailError(null);
+
+    try {
+      const { data, error } = await supabase.rpc('admin_confirm_user_email', {
+        p_target: val,
+      });
+
+      if (error) {
+        setConfirmEmailError(error.message);
+      } else if (!data?.success) {
+        setConfirmEmailError(data?.error || 'Не удалось подтвердить почту');
+      } else {
+        showNotification(`Почта для "${val}" успешно подтверждена вручную!`);
+        setConfirmEmailInput('');
+      }
+    } catch (err: unknown) {
+      setConfirmEmailError(err instanceof Error ? err.message : 'Ошибка при подтверждении');
+    } finally {
+      setIsConfirmingEmail(false);
     }
   };
 
@@ -399,7 +414,62 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
             )}
           </div>
 
-          {/* SECTION 2: GLOBAL GOD ANNOUNCEMENT */}
+          {/* SECTION 2: MANUAL EMAIL CONFIRMATION */}
+          <div className="pt-4 border-t border-[#2C2C38] space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+                <MailCheck className="w-4 h-4 text-emerald-400" />
+                Ручное подтверждение Email в базе
+              </h3>
+              <span className="text-[11px] text-emerald-400 font-semibold">
+                Мгновенно • Без отправки писем
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl bg-[#141A20] border border-[#1E302A] space-y-3">
+              <p className="text-xs text-zinc-400">
+                Позволяет создателю вручную подтвердить почту любого пользователя или активировать свой собственный аккаунт в один клик:
+              </p>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={confirmEmailInput}
+                  onChange={(e) => setConfirmEmailInput(e.target.value)}
+                  placeholder="Email или @username пользователя..."
+                  className="flex-1 px-3.5 py-2.5 bg-[#0E1317] border border-[#23352E] rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleConfirmEmail()}
+                  disabled={isConfirmingEmail || !confirmEmailInput.trim()}
+                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-colors shadow-md shadow-emerald-600/30 flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{isConfirmingEmail ? '...' : 'Подтвердить'}</span>
+                </button>
+              </div>
+
+              {confirmEmailError && (
+                <p className="text-xs text-rose-400 font-medium pl-1">{confirmEmailError}</p>
+              )}
+
+              <div className="pt-1 flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Быстрое действие для себя:</span>
+                <button
+                  type="button"
+                  onClick={() => handleConfirmEmail('stasochec')}
+                  disabled={isConfirmingEmail}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                >
+                  <MailCheck className="w-3.5 h-3.5" />
+                  <span>Подтвердить мой Email (@stasochec)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 3: GLOBAL GOD ANNOUNCEMENT */}
           <div className="pt-4 border-t border-[#2C2C38] space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">

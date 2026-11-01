@@ -6,6 +6,7 @@ import {
   Send,
   Clock,
   X,
+  FileImage,
 } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -14,6 +15,9 @@ import { UserBadges } from '@/components/ui/Badges';
 import { MessageBubble } from './MessageBubble';
 import { Logo } from '@/components/ui/Logo';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { compressImage, CompressResult } from '@/utils/imageCompressor';
+import { RealtimeChannel } from '@supabase/supabase-js';
+import { Message } from '@/types';
 
 interface ChatAreaProps {
   onBack: () => void;
@@ -27,12 +31,83 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionInfo, setCompressionInfo] = useState<{
+    originalKb: number;
+    compressedKb: number;
+    reduction: number;
+  } | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
+
+  // 1. REALTIME SUBSCRIPTION PER ACTIVE CHAT WITH CLEANUP
+  useEffect(() => {
+    // Перед подпиской на новый чат отписываемся от предыдущего канала:
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+
+    if (!activeChatId || !isSupabaseConfigured()) return;
+
+    const channelName = `chat_messages_${activeChatId}_${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `chat_id=eq.${activeChatId}`,
+        },
+        async (payload) => {
+          const newMsg = payload.new as Message;
+          if (newMsg.chat_id !== activeChatId) return;
+
+          // Fetch sender profile info
+          const { data: senderProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', newMsg.sender_id)
+            .maybeSingle();
+
+          const populatedMsg: Message = {
+            ...newMsg,
+            sender: senderProfile || undefined,
+          };
+
+          useChatStore.getState().addRealtimeMessage(populatedMsg);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'messages',
+          filter: `chat_id=eq.${activeChatId}`,
+        },
+        (payload) => {
+          useChatStore.getState().removeRealtimeMessage(payload.old.id);
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [activeChatId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -69,13 +144,45 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
     profile?.role === 'moderator' ||
     profile?.username?.toLowerCase() === 'stasochec';
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 2. CLIENT-SIDE COMPRESSION HOOKUP
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
+    if (!file) return;
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
     }
+
+    if (file.type.startsWith('image/')) {
+      setIsCompressing(true);
+      try {
+        // Compress down to 1280px max dimension, webp quality 0.8
+        const res: CompressResult = await compressImage(file, 1280, 0.8);
+        setSelectedFile(res.file);
+        setPreviewUrl(res.previewUrl);
+        setCompressionInfo({
+          originalKb: Math.round(res.originalSize / 1024),
+          compressedKb: Math.round(res.compressedSize / 1024),
+          reduction: res.reductionPercentage,
+        });
+      } finally {
+        setIsCompressing(false);
+      }
+    } else {
+      setSelectedFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setCompressionInfo(null);
+    }
+  };
+
+  const handleClearAttachment = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setCompressionInfo(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSend = async (e?: React.FormEvent) => {
@@ -88,13 +195,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
     if (selectedFile && user && isSupabaseConfigured()) {
       setIsUploading(true);
       try {
-        const fileExt = selectedFile.name.split('.').pop();
+        const fileExt = selectedFile.name.split('.').pop() || 'webp';
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const filePath = `${user.id}/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('chat-media')
-          .upload(filePath, selectedFile);
+          .upload(filePath, selectedFile, {
+            contentType: selectedFile.type,
+          });
 
         if (!uploadError) {
           const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
@@ -112,9 +221,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
 
     await sendMessage(activeChat.id, inputContent, mediaUrl, mediaType);
     setInputContent('');
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    handleClearAttachment();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -222,24 +329,41 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
       </div>
 
       {/* 3. ATTACHMENT PREVIEW */}
-      {previewUrl && (
-        <div className="px-4 py-2 bg-white/90 dark:bg-[#18181C]/90 border-t border-[#E4E4E7] dark:border-[#26262F] flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img
-              src={previewUrl}
-              alt="Preview"
-              className="w-12 h-12 object-cover rounded-lg border border-orange-400"
-            />
-            <span className="text-xs text-zinc-700 dark:text-zinc-300">
-              {selectedFile?.name || 'Изображение готово к отправке'}
-            </span>
-          </div>
+      {(previewUrl || isCompressing) && (
+        <div className="px-4 py-2.5 bg-white/95 dark:bg-[#18181C]/95 border-t border-[#E4E4E7] dark:border-[#26262F] flex items-center justify-between backdrop-blur-xs">
+          {isCompressing ? (
+            <div className="flex items-center gap-2.5 text-xs text-orange-500 font-semibold py-1">
+              <span className="w-4 h-4 border-2 border-[#FF7A00] border-t-transparent rounded-full animate-spin" />
+              <span>Оптимизация изображения через HTML Canvas (до 1280px WebP)...</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 min-w-0">
+              <img
+                src={previewUrl!}
+                alt="Preview"
+                className="w-12 h-12 object-cover rounded-xl border border-orange-400 shadow-xs"
+              />
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 block truncate">
+                  {selectedFile?.name || 'Изображение готово к отправке'}
+                </span>
+                {compressionInfo && (
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                      ⚡ Сжато: {compressionInfo.compressedKb} КБ (-{compressionInfo.reduction}%)
+                    </span>
+                    <span className="text-[10px] text-zinc-400">
+                      было {compressionInfo.originalKb} КБ
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <button
-            onClick={() => {
-              setSelectedFile(null);
-              setPreviewUrl(null);
-            }}
-            className="p-1 rounded-full text-zinc-400 hover:text-rose-500"
+            onClick={handleClearAttachment}
+            className="p-1 rounded-full text-zinc-400 hover:text-rose-500 transition-colors ml-2"
+            title="Отменить вложение"
           >
             <X className="w-4 h-4" />
           </button>

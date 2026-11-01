@@ -33,6 +33,7 @@ export const useCheckUsername = (
   const latestRequestIdRef = useRef(0);
 
   useEffect(() => {
+    let isCurrent = true;
     const cleanUsername = rawUsername.trim().replace(/^@/, '');
 
     // Increment request ID to invalidate any pending in-flight queries
@@ -86,7 +87,7 @@ export const useCheckUsername = (
       return;
     }
 
-    // 6. Valid format passed: Initiate 300ms debounced RPC check
+    // 6. Valid format passed: Initiate 350ms debounced RPC check with race-condition guard
     setIsChecking(true);
     setStatus('checking');
     setMessage('Проверка доступности...');
@@ -97,8 +98,8 @@ export const useCheckUsername = (
           check_username: cleanUsername,
         });
 
-        // Stale check: ignore if another request started in the meantime
-        if (currentRequestId !== latestRequestIdRef.current) {
+        // Stale check: ignore if component unmounted or another query started
+        if (!isCurrent || currentRequestId !== latestRequestIdRef.current) {
           return;
         }
 
@@ -111,7 +112,7 @@ export const useCheckUsername = (
             .ilike('username', cleanUsername)
             .maybeSingle();
 
-          if (currentRequestId !== latestRequestIdRef.current) return;
+          if (!isCurrent || currentRequestId !== latestRequestIdRef.current) return;
 
           if (existingUser && (!currentUserId || existingUser.id !== currentUserId)) {
             setStatus('taken');
@@ -131,19 +132,20 @@ export const useCheckUsername = (
           setMessage(`@${cleanUsername.toLowerCase()} свободен`);
         }
       } catch (err) {
-        if (currentRequestId === latestRequestIdRef.current) {
+        if (isCurrent && currentRequestId === latestRequestIdRef.current) {
           console.error('RPC network error:', err);
           setStatus('available');
           setMessage(`@${cleanUsername.toLowerCase()} свободен`);
         }
       } finally {
-        if (currentRequestId === latestRequestIdRef.current) {
+        if (isCurrent && currentRequestId === latestRequestIdRef.current) {
           setIsChecking(false);
         }
       }
-    }, 300); // 300ms debounce
+    }, 350); // 350ms debounce
 
     return () => {
+      isCurrent = false;
       clearTimeout(timer);
     };
   }, [rawUsername, currentUsername, currentUserId]);

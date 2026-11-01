@@ -320,6 +320,50 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.register_user_direct(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
 
+-- 7.2 РУЧНОЕ ПОДТВЕРЖДЕНИЕ EMAIL АДМИНИСТРАТОРОМ (@stasochec)
+DROP FUNCTION IF EXISTS public.admin_confirm_user_email(TEXT);
+CREATE OR REPLACE FUNCTION public.admin_confirm_user_email(p_target TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  target_user_id UUID;
+  caller_profile public.profiles%ROWTYPE;
+  clean_target TEXT;
+BEGIN
+  -- Проверяем права вызывающего: строго @stasochec с ролью owner
+  SELECT * INTO caller_profile
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  IF caller_profile.username IS NULL OR LOWER(caller_profile.username) != 'stasochec' OR caller_profile.role != 'owner' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Доступ разрешен исключительно создателю @stasochec');
+  END IF;
+
+  clean_target := LOWER(TRIM(p_target));
+
+  -- Ищем целевого пользователя по email или никнейму
+  SELECT u.id INTO target_user_id
+  FROM auth.users u
+  LEFT JOIN public.profiles p ON p.id = u.id
+  WHERE LOWER(u.email) = clean_target
+     OR LOWER(p.username) = LOWER(REGEXP_REPLACE(clean_target, '^@', ''))
+  LIMIT 1;
+
+  IF target_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Пользователь не найден (укажите валидный email или @username)');
+  END IF;
+
+  UPDATE auth.users
+  SET email_confirmed_at = NOW()
+  WHERE id = target_user_id;
+
+  RETURN jsonb_build_object('success', true, 'user_id', target_user_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.admin_confirm_user_email(TEXT) TO authenticated;
+
 -- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()
 RETURNS INT AS $$
