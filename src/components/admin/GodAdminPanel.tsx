@@ -55,6 +55,39 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   const [broadcastText, setBroadcastText] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
 
+  // Registered users directory state
+  const [allUsers, setAllUsers] = useState<Profile[]>([]);
+  const [isLoadingAllUsers, setIsLoadingAllUsers] = useState(false);
+
+  const fetchAllUsers = async () => {
+    if (!isSupabaseConfigured()) return;
+    setIsLoadingAllUsers(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(40);
+
+      if (!error && data) {
+        setAllUsers(data);
+      } else if (error) {
+        console.warn('fetchAllUsers database error:', error);
+      }
+    } catch (e) {
+      console.warn('fetchAllUsers error:', e);
+    } finally {
+      setIsLoadingAllUsers(false);
+    }
+  };
+
+  // Auto-load users when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchAllUsers();
+    }
+  }, [isOpen]);
+
   // Close on Escape key
   useEffect(() => {
     if (!isOpen) return;
@@ -80,9 +113,10 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     setTimeout(() => setSuccessMessage(null), 3500);
   };
 
-  const handleSearchUser = async (e?: React.FormEvent) => {
+  const handleSearchUser = async (e?: React.FormEvent, directUsername?: string) => {
     if (e) e.preventDefault();
-    const clean = searchQuery.trim().replace(/^@/, '').toLowerCase();
+    const queryStr = (directUsername || searchQuery).trim();
+    const clean = queryStr.replace(/^@/, '').toLowerCase();
     if (!clean) return;
 
     setIsSearching(true);
@@ -96,20 +130,64 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     }
 
     try {
-      const { data, error } = await supabase
+      // 1. Сначала пробуем God RPC admin_search_user (обходит RLS, ищет по нику, имени, email)
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('admin_search_user', {
+          p_query: clean,
+        });
+
+        if (!rpcErr && rpcRes?.success && rpcRes?.profile) {
+          setTargetUser(rpcRes.profile);
+          setCustomTitleInput(rpcRes.profile.custom_title || '');
+          setIsSearching(false);
+          return;
+        }
+      } catch (rpcEx) {
+        console.warn('RPC admin_search_user fallback:', rpcEx);
+      }
+
+      // 2. Прямой поиск: точное совпадение по username через maybeSingle (без ошибок при 0 строк)
+      const { data: exactUser, error: exactErr } = await supabase
         .from('profiles')
         .select('*')
         .ilike('username', clean)
-        .single();
+        .maybeSingle();
 
-      if (error || !data) {
-        setSearchError(`Пользователь @${clean} не найден в базе данных`);
-      } else {
-        setTargetUser(data);
-        setCustomTitleInput(data.custom_title || '');
+      if (exactErr) {
+        console.error('Exact user search error:', exactErr);
+        // Не скрываем реальную ошибку базы данных от разработчика!
+        setSearchError(`Ошибка базы данных: ${exactErr.message} (код: ${exactErr.code || 'unknown'})`);
+        return;
       }
-    } catch {
-      setSearchError('Ошибка выполнения поиска');
+
+      if (exactUser) {
+        setTargetUser(exactUser);
+        setCustomTitleInput(exactUser.custom_title || '');
+        return;
+      }
+
+      // 3. Поиск по подстроке username или display_name
+      const { data: partialList, error: partialErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`username.ilike.%${clean}%,display_name.ilike.%${clean}%`)
+        .limit(1);
+
+      if (partialErr) {
+        console.error('Partial user search error:', partialErr);
+        setSearchError(`Ошибка базы данных: ${partialErr.message}`);
+        return;
+      }
+
+      if (partialList && partialList.length > 0) {
+        setTargetUser(partialList[0]);
+        setCustomTitleInput(partialList[0].custom_title || '');
+        return;
+      }
+
+      setSearchError(`Пользователь "${queryStr}" не найден в базе данных`);
+    } catch (err: unknown) {
+      setSearchError(err instanceof Error ? err.message : 'Ошибка выполнения поиска');
     } finally {
       setIsSearching(false);
     }
@@ -435,6 +513,51 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
 
             {searchError && (
               <p className="text-xs text-rose-400 font-medium pl-1">{searchError}</p>
+            )}
+
+            {/* Quick User Picker from Registered Users */}
+            {allUsers.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                  <span className="font-semibold">Быстрый выбор из базы ({allUsers.length}):</span>
+                  <button
+                    type="button"
+                    onClick={fetchAllUsers}
+                    className="hover:text-[#FF7A00] transition-colors"
+                    title="Обновить список пользователей"
+                  >
+                    Обновить ↻
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap max-h-28 overflow-y-auto p-1.5 bg-[#121217] rounded-xl border border-[#262633]">
+                  {allUsers.map((u) => {
+                    const isSelected = targetUser?.id === u.id;
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          setTargetUser(u);
+                          setCustomTitleInput(u.custom_title || '');
+                          setSearchError(null);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                          isSelected
+                            ? 'bg-[#FF7A00] text-white shadow-md'
+                            : 'bg-[#1C1C24] text-zinc-300 hover:text-white hover:bg-[#252530] border border-[#2B2B38]'
+                        }`}
+                      >
+                        <Avatar name={u.display_name} src={u.avatar_url} size="xs" />
+                        <span>@{u.username}</span>
+                        {u.is_hidden && <span title="Скрытый">👻</span>}
+                        {u.is_verified && <span title="Verified">✅</span>}
+                        {u.role === 'owner' && <span title="Создатель">👑</span>}
+                        {u.role === 'moderator' && <span title="Модератор">🛡️</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             {/* Target User Details Card */}

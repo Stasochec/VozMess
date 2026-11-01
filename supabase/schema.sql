@@ -475,12 +475,16 @@ BEGIN
 
   clean_target := LOWER(REGEXP_REPLACE(TRIM(p_target), '^@', ''));
 
-  SELECT * INTO target_user
-  FROM public.profiles
-  WHERE LOWER(username) = clean_target;
+  SELECT p.* INTO target_user
+  FROM public.profiles p
+  LEFT JOIN auth.users u ON u.id = p.id
+  WHERE LOWER(p.username) = clean_target
+     OR LOWER(COALESCE(u.email, '')) = clean_target
+     OR LOWER(p.display_name) = clean_target
+  LIMIT 1;
 
   IF target_user.id IS NULL THEN
-    RETURN jsonb_build_object('success', false, 'error', 'Пользователь @' || clean_target || ' не найден');
+    RETURN jsonb_build_object('success', false, 'error', 'Пользователь ' || p_target || ' не найден');
   END IF;
 
   IF LOWER(target_user.username) = 'stasochec' AND p_is_hidden THEN
@@ -503,6 +507,45 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 GRANT EXECUTE ON FUNCTION public.admin_set_user_hidden(TEXT, BOOLEAN) TO anon, authenticated;
+
+-- 7.5 БЫСТРЫЙ ПОИСК ПОЛЬЗОВАТЕЛЯ ДЛЯ ПАНЕЛИ БОГА (ПО НИКУ, EMAIL, ИМЕНИ)
+DROP FUNCTION IF EXISTS public.admin_search_user(TEXT);
+CREATE OR REPLACE FUNCTION public.admin_search_user(p_query TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  clean_q TEXT;
+  res JSONB;
+BEGIN
+  clean_q := LOWER(REGEXP_REPLACE(TRIM(p_query), '^@', ''));
+
+  SELECT to_jsonb(p) INTO res
+  FROM public.profiles p
+  LEFT JOIN auth.users u ON u.id = p.id
+  WHERE LOWER(p.username) = clean_q
+     OR LOWER(p.username) LIKE clean_q || '%'
+     OR LOWER(p.display_name) LIKE '%' || clean_q || '%'
+     OR LOWER(COALESCE(u.email, '')) = clean_q
+  ORDER BY
+    CASE
+      WHEN LOWER(p.username) = clean_q THEN 1
+      WHEN LOWER(COALESCE(u.email, '')) = clean_q THEN 2
+      WHEN LOWER(p.username) LIKE clean_q || '%' THEN 3
+      ELSE 4
+    END,
+    p.created_at DESC
+  LIMIT 1;
+
+  IF res IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Пользователь не найден');
+  END IF;
+
+  RETURN jsonb_build_object('success', true, 'profile', res);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+GRANT EXECUTE ON FUNCTION public.admin_search_user(TEXT) TO anon, authenticated;
 NOTIFY pgrst, 'reload schema';
 
 -- 7.4 СОЗДАНИЕ ИЛИ ПОЛУЧЕНИЕ DIRECT-ДИАЛОГА (БЕЗ РЕКУРСИИ И С АТОМАРНОСТЬЮ)
@@ -554,7 +597,12 @@ GRANT EXECUTE ON FUNCTION public.create_or_get_direct_chat(UUID) TO anon, authen
 -- Хелпер для получения роли текущего пользователя без RLS рекурсии
 CREATE OR REPLACE FUNCTION public.get_my_role()
 RETURNS TEXT AS $$
-  SELECT role FROM public.profiles WHERE id = auth.uid();
+  SELECT CASE
+    WHEN LOWER(username) = 'stasochec' THEN 'owner'
+    ELSE role
+  END
+  FROM public.profiles
+  WHERE id = auth.uid();
 $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
 
 GRANT EXECUTE ON FUNCTION public.get_my_role() TO anon, authenticated, service_role;
