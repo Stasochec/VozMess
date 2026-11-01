@@ -413,7 +413,7 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
 
             <div className="p-4 rounded-xl bg-gradient-to-br from-[#1F140C] to-[#160E08] border border-[#40230E] space-y-3">
               <p className="text-xs text-zinc-400">
-                Официальное объявление от имени @stasochec. Сообщение появится во всех существующих чатах и исчезнет ровно через 14 дней в соответствии с правилом Steam TTL.
+                Официальное объявление от имени @stasochec. Сообщение появится во всех существующих чатах и исчезнет ровно через 14 дней в соответствии с протоколом автоудаления Vozdux TTL.
               </p>
 
               <textarea

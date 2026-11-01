@@ -183,7 +183,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
             className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-500/10 text-[#FF7A00] border border-orange-500/20"
           >
             <Clock className="w-3.5 h-3.5" />
-            <span>Steam TTL: 14d</span>
+            <span>Vozdux TTL: 14d</span>
           </div>
         </div>
       </header>

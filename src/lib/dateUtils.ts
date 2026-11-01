@@ -1,5 +1,5 @@
 /**
- * Date and Steam-like 14-day TTL formatting utilities
+ * Date and 14-day auto-deletion TTL formatting utilities
  */
 
 export const formatMessageTime = (dateStr: string): string => {
@@ -50,7 +50,7 @@ export interface TTLInfo {
 }
 
 /**
- * Calculates remaining TTL for Steam-like 14 days auto-deletion
+ * Calculates remaining TTL for 14 days auto-deletion
  */
 export const getRemainingTTL = (expiresAtStr: string, createdAtStr?: string): TTLInfo => {
   try {

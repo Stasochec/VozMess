@@ -151,7 +151,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const nowIso = new Date().toISOString();
 
-      // Steam TTL: Only load messages whose 14-day lifetime has not expired
+      // Auto-deletion TTL: Only load messages whose 14-day lifetime has not expired
       const { data, error } = await supabase
         .from('messages')
         .select(`
@@ -179,7 +179,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     if (!currentUser || !isSupabaseConfigured()) return;
 
-    // Steam-like 14 days TTL expiration
+    // 14 days auto-deletion TTL expiration
     const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
 
     const optimisticMessage: Message = {

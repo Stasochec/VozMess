@@ -253,7 +253,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* 5. TELEGRAM DRAWER MENU */}
+      {/* 5. SIDE DRAWER MENU */}
       <AnimatePresence>
         {isDrawerOpen && (
           <>
@@ -372,7 +372,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* Drawer Footer with Sign Out */}
               <div className="p-4 border-t border-[#E4E4E7] dark:border-[#282833] space-y-2">
                 <div className="text-[10px] text-zinc-400 text-center">
-                  Vozduxan Web • Steam TTL 14 Days
+                  Vozduxan Web • TTL 14 Days
                 </div>
 
                 <button

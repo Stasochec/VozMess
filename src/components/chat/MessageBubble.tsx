@@ -140,7 +140,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
         </div>
 
-        {/* Telegram Bubble Tails SVG */}
+        {/* Message Bubble Tails SVG */}
         {isOutgoing ? (
           <div className="absolute right-[-7px] bottom-0 w-2 h-3 overflow-hidden pointer-events-none">
             <svg viewBox="0 0 8 12" className="w-2 h-3 fill-[#FFEADC] dark:fill-[#994200]">
