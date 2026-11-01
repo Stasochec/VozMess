@@ -16,8 +16,9 @@ import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
+import { usePresenceStore } from '@/store/usePresenceStore';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { formatChatDate } from '@/lib/dateUtils';
+import { formatChatDate, formatLastSeen } from '@/lib/dateUtils';
 
 interface UserProfileModalProps {
   user: Profile | null;
@@ -34,6 +35,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 }) => {
   const { chats, createDirectChat, setActiveChatId } = useChatStore();
   const { user: currentAuthUser, profile: currentProfile } = useAuthStore();
+  const { isUserOnline } = usePresenceStore();
 
   const [copied, setCopied] = useState(false);
   const [commonGroups, setCommonGroups] = useState<Chat[]>([]);
@@ -139,7 +141,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           {/* Large Avatar */}
           <div className="relative mb-3">
-            <Avatar name={user.display_name} src={user.avatar_url} size="xl" isOnline />
+            <Avatar
+              name={user.display_name}
+              src={user.avatar_url}
+              size="xl"
+              isOnline={isUserOnline(user, currentProfile)}
+            />
           </div>
 
           {/* Name & Badges */}
@@ -156,6 +163,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               customTitle={user.custom_title}
               showRoleText
             />
+          </div>
+
+          {/* Online / Last Seen status */}
+          <div className="text-xs mb-1">
+            {isUserOnline(user, currentProfile) ? (
+              <span className="text-emerald-400 font-semibold">в сети</span>
+            ) : (
+              <span className="text-zinc-400">{formatLastSeen(user.last_seen)}</span>
+            )}
           </div>
 
           {/* @username with copy button */}

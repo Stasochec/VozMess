@@ -98,3 +98,52 @@ export const getRemainingTTL = (expiresAtStr: string, createdAtStr?: string): TT
     };
   }
 };
+
+/**
+ * Formats user's last seen time like Telegram
+ */
+export const formatLastSeen = (lastSeenStr?: string | null, isOnline = false): string => {
+  if (isOnline) return 'в сети';
+  if (!lastSeenStr) return 'был(а) недавно';
+
+  try {
+    const date = new Date(lastSeenStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+
+    if (diffMs < 0 || isNaN(diffMs)) return 'был(а) недавно';
+
+    const diffMinutes = Math.floor(diffMs / (60 * 1000));
+    const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+
+    if (diffMinutes < 1) return 'был(а) только что';
+    if (diffMinutes < 60) return `был(а) ${diffMinutes} мин. назад`;
+
+    const isToday =
+      date.getDate() === now.getDate() &&
+      date.getMonth() === now.getMonth() &&
+      date.getFullYear() === now.getFullYear();
+
+    const timeStr = formatMessageTime(lastSeenStr);
+
+    if (isToday) {
+      return `был(а) сегодня в ${timeStr}`;
+    }
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday =
+      date.getDate() === yesterday.getDate() &&
+      date.getMonth() === yesterday.getMonth() &&
+      date.getFullYear() === yesterday.getFullYear();
+
+    if (isYesterday) {
+      return `был(а) вчера в ${timeStr}`;
+    }
+
+    const dateStr = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+    return `был(а) ${dateStr} в ${timeStr}`;
+  } catch {
+    return 'был(а) недавно';
+  }
+};

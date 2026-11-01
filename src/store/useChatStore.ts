@@ -22,6 +22,7 @@ interface ChatState {
   fetchChats: () => Promise<void>;
   fetchMessages: (chatId: string) => Promise<void>;
   sendMessage: (chatId: string, content: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   createDirectChat: (targetUser: Profile) => Promise<string | null>;
   createGroupChat: (title: string, memberIds: string[]) => Promise<string | null>;
@@ -239,6 +240,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         messages: state.messages.filter((m) => m.id !== optimisticMessage.id),
       }));
+    }
+  },
+
+  editMessage: async (messageId: string, newContent: string) => {
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId ? { ...m, content: newContent } : m
+      ),
+    }));
+
+    if (!isSupabaseConfigured()) return;
+
+    try {
+      await supabase.from('messages').update({ content: newContent }).eq('id', messageId);
+    } catch (err) {
+      console.error('Failed to edit message:', err);
     }
   },
 

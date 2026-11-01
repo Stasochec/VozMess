@@ -18,6 +18,7 @@ interface MessageBubbleProps {
     senderName?: string,
     createdAt?: string
   ) => void;
+  onOpenContextMenu?: (e: React.MouseEvent, message: Message) => void;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -27,6 +28,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onDelete,
   onOpenUserProfile,
   onOpenMedia,
+  onOpenContextMenu,
 }) => {
   const [showDelete, setShowDelete] = useState(false);
   const { fontSize } = useSettingsStore();
@@ -88,7 +90,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
       {/* Bubble Container */}
       <div
-        className={`relative max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2 text-sm shadow-sm transition-all ${
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpenContextMenu?.(e, message);
+        }}
+        onClick={(e) => {
+          // On mobile or on double click, open Telegram context menu
+          if (typeof window !== 'undefined' && window.innerWidth < 768) {
+            onOpenContextMenu?.(e, message);
+          }
+        }}
+        className={`relative max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2 text-sm shadow-sm transition-all cursor-pointer sm:cursor-default ${
           isOutgoing
             ? 'bg-[#FFEADC] dark:bg-[#994200] text-zinc-900 dark:text-zinc-50 rounded-br-none border border-orange-200/50 dark:border-orange-600/30'
             : 'bg-white dark:bg-[#212127] text-zinc-900 dark:text-zinc-100 rounded-bl-none border border-zinc-200/60 dark:border-[#2C2C35]'

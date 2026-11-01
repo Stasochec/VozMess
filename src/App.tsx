@@ -14,6 +14,7 @@ import { Logo } from '@/components/ui/Logo';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
 import { useThemeStore } from '@/store/useThemeStore';
+import { usePresenceStore } from '@/store/usePresenceStore';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { Profile, Chat } from '@/types';
@@ -23,6 +24,7 @@ function MessengerScreen() {
   const { fetchChats, subscribeToRealtime, unsubscribeFromRealtime, activeChatId, setActiveChatId } =
     useChatStore();
   const { theme } = useThemeStore();
+  const { initPresence, cleanupPresence } = usePresenceStore();
 
   const [isGodPanelOpen, setIsGodPanelOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -55,10 +57,12 @@ function MessengerScreen() {
     if (user && isSupabaseConfigured()) {
       fetchChats();
       subscribeToRealtime();
+      initPresence(user.id);
     }
 
     return () => {
       unsubscribeFromRealtime();
+      cleanupPresence();
     };
   }, [user]);
 

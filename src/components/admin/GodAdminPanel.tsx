@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
+import { usePresenceStore } from '@/store/usePresenceStore';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Profile, UserRole } from '@/types';
 import { Avatar } from '@/components/ui/Avatar';
@@ -32,6 +33,7 @@ interface GodAdminPanelProps {
 export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose }) => {
   const { profile } = useAuthStore();
   const { broadcastAnnouncement } = useChatStore();
+  const { isUserOnline } = usePresenceStore();
 
   // All React hooks MUST be declared at the top unconditionally (React Rules of Hooks)
   const [searchQuery, setSearchQuery] = useState('');
@@ -578,7 +580,7 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
                       name={targetUser.display_name}
                       src={targetUser.avatar_url}
                       size="lg"
-                      isOnline
+                      isOnline={isUserOnline(targetUser, profile)}
                     />
                     <div>
                       <div className="flex items-center gap-2">

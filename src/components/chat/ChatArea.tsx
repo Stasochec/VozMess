@@ -9,7 +9,10 @@ import {
   FileImage,
   UploadCloud,
   AlertCircle,
-  Image as ImageIcon,
+  Pin,
+  Pencil,
+  CornerUpLeft,
+  Check,
 } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -17,13 +20,17 @@ import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
 import { MessageBubble } from './MessageBubble';
 import { MediaViewerModal } from './MediaViewerModal';
+import { MessageContextMenu } from './MessageContextMenu';
 import { Logo } from '@/components/ui/Logo';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { compressImage, CompressResult } from '@/utils/imageCompressor';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { Message, Chat, Profile } from '@/types';
 import { useSettingsStore } from '@/store/useSettingsStore';
+import { usePresenceStore } from '@/store/usePresenceStore';
 import { soundEffects } from '@/lib/soundUtils';
+import { formatLastSeen } from '@/lib/dateUtils';
+import { AnimatePresence } from 'framer-motion';
 
 interface ChatAreaProps {
   onBack: () => void;
@@ -36,10 +43,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onOpenUserProfile,
   onOpenGroupProfile,
 }) => {
-  const { chats, activeChatId, messages, sendMessage, deleteMessage, isLoadingMessages } =
-    useChatStore();
+  const {
+    chats,
+    activeChatId,
+    messages,
+    sendMessage,
+    editMessage,
+    deleteMessage,
+    isLoadingMessages,
+  } = useChatStore();
   const { user, profile } = useAuthStore();
   const { sendOnEnter, sendSoundEnabled } = useSettingsStore();
+  const { isUserOnline } = usePresenceStore();
 
   const [inputContent, setInputContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -63,6 +78,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     senderName?: string;
     createdAt?: string;
   } | null>(null);
+
+  // Context Menu State (Telegram PKM / Mobile Tap)
+  const [contextMenu, setContextMenu] = useState<{
+    message: Message;
+    position: { x: number; y: number };
+  } | null>(null);
+
+  // Message Action States (Reply, Edit, Pin)
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [replyingMessage, setReplyingMessage] = useState<Message | null>(null);
+  const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -157,7 +183,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     };
   }, [activeChatId]);
 
-  // Smooth scroll to bottom on new messages or input change
+  // Smooth scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -252,10 +278,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
   };
 
+  // Context Menu Actions
+  const handleStartReply = (msg: Message) => {
+    setReplyingMessage(msg);
+    setEditingMessage(null);
+    textareaRef.current?.focus();
+  };
+
+  const handleStartEdit = (msg: Message) => {
+    setEditingMessage(msg);
+    setReplyingMessage(null);
+    setInputContent(msg.content || '');
+    textareaRef.current?.focus();
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if ((!inputContent.trim() && !selectedFile) || !activeChat) return;
 
+    // 1. IF IN EDIT MODE -> UPDATE EXISTING MESSAGE
+    if (editingMessage) {
+      const updatedText = inputContent.trim();
+      if (updatedText) {
+        await editMessage(editingMessage.id, updatedText);
+      }
+      setEditingMessage(null);
+      setInputContent('');
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      return;
+    }
+
+    // 2. NORMAL MESSAGE OR REPLY SENDING
     let mediaUrl: string | undefined = undefined;
     let mediaType: string | undefined = undefined;
 
@@ -281,7 +334,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             `Ошибка отправки фото: ${uploadError.message}. Убедитесь, что в Supabase создан бакет 'chat-media'.`
           );
           setIsUploading(false);
-          return; // Do not send empty phantom message
+          return;
         }
 
         const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
@@ -302,7 +355,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       soundEffects.playSent();
     }
 
-    await sendMessage(activeChat.id, inputContent, mediaUrl, mediaType);
+    // Handle reply prefix if quoting another message
+    let finalContent = inputContent.trim();
+    if (replyingMessage) {
+      const author = replyingMessage.sender?.display_name || 'сообщение';
+      const quote = (replyingMessage.content || 'Вложение').slice(0, 45);
+      finalContent = `↩️ В ответ ${author}: «${quote}»\n${finalContent}`;
+      setReplyingMessage(null);
+    }
+
+    await sendMessage(activeChat.id, finalContent, mediaUrl, mediaType);
     setInputContent('');
     handleClearAttachment();
 
@@ -417,7 +479,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               name={chatTitle}
               src={chatAvatar}
               size="md"
-              isOnline={activeChat.type === 'direct' && Boolean(activeChat.other_user)}
+              isOnline={
+                activeChat.type === 'direct' && activeChat.other_user
+                  ? isUserOnline(activeChat.other_user, profile)
+                  : false
+              }
             />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -436,9 +502,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                {activeChat.type === 'direct'
-                  ? `@${activeChat.other_user?.username || 'user'}`
-                  : `${activeChat.members?.length || 1} участников • нажми для настроек ⚙️`}
+                {activeChat.type === 'direct' && activeChat.other_user ? (
+                  isUserOnline(activeChat.other_user, profile) ? (
+                    <span className="text-emerald-500 font-semibold">в сети</span>
+                  ) : (
+                    formatLastSeen(activeChat.other_user.last_seen)
+                  )
+                ) : (
+                  `${activeChat.members?.length || 1} участников • нажми для настроек ⚙️`
+                )}
               </p>
             </div>
           </div>
@@ -450,6 +522,28 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           <span>TTL 14 Дней</span>
         </div>
       </header>
+
+      {/* PINNED MESSAGE BANNER */}
+      {pinnedMessage && (
+        <div className="px-4 py-2 bg-[#FF7A00]/10 border-b border-[#FF7A00]/20 flex items-center justify-between text-xs text-zinc-200 z-10">
+          <div className="flex items-center gap-2 min-w-0">
+            <Pin className="w-3.5 h-3.5 text-[#FF7A00] flex-shrink-0" />
+            <div className="min-w-0 truncate">
+              <span className="font-bold text-[#FF8A1C] mr-1.5">Закрепленное сообщение:</span>
+              <span className="text-zinc-300">
+                {pinnedMessage.content || (pinnedMessage.media_url ? 'Фото' : 'Сообщение')}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setPinnedMessage(null)}
+            className="p-1 rounded text-zinc-400 hover:text-white transition-colors"
+            title="Открепить"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* 2. MESSAGES STREAM */}
       <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-1 sm:space-y-2 overscroll-contain">
@@ -479,6 +573,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               onOpenUserProfile={onOpenUserProfile}
               onOpenMedia={(url, type, caption, senderName, createdAt) =>
                 setViewingMedia({ url, type, caption, senderName, createdAt })
+              }
+              onOpenContextMenu={(e, m) =>
+                setContextMenu({
+                  message: m,
+                  position: { x: e.clientX, y: e.clientY },
+                })
               }
             />
           ))
@@ -544,7 +644,54 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* 5. EMOJI PICKER POPUP (MOBILE ADAPTED) */}
+      {/* 5. REPLY BAR (TELEGRAM QUOTE BANNER) */}
+      {replyingMessage && (
+        <div className="px-4 py-2 bg-zinc-100 dark:bg-[#1E1E26] border-t border-[#E4E4E7] dark:border-[#26262F] flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <CornerUpLeft className="w-4 h-4 text-[#FF7A00] flex-shrink-0" />
+            <div className="min-w-0 truncate">
+              <span className="font-bold text-[#FF8A1C] block truncate">
+                Ответ {replyingMessage.sender?.display_name || 'пользователю'}:
+              </span>
+              <span className="text-zinc-400 truncate block text-[11px]">
+                {replyingMessage.content || 'Медиафайл'}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setReplyingMessage(null)}
+            className="p-1 rounded text-zinc-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 6. EDITING BAR */}
+      {editingMessage && (
+        <div className="px-4 py-2 bg-amber-500/10 border-t border-amber-500/25 flex items-center justify-between text-xs text-amber-200">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Pencil className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <div className="min-w-0 truncate">
+              <span className="font-bold block">Редактирование сообщения</span>
+              <span className="text-[11px] text-amber-300/80 truncate block">
+                {editingMessage.content}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setEditingMessage(null);
+              setInputContent('');
+            }}
+            className="p-1 rounded text-amber-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 7. EMOJI PICKER POPUP (MOBILE ADAPTED) */}
       {showEmojiPicker && (
         <div className="absolute bottom-16 left-3 right-3 sm:left-auto sm:right-20 p-3 bg-white dark:bg-[#1E1E26] border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl z-30 flex gap-2.5 flex-wrap justify-center sm:justify-start max-w-xs mx-auto">
           {sampleEmojis.map((emoji) => (
@@ -562,7 +709,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* 6. BOTTOM INPUT BAR (MOBILE VIRTUAL KEYBOARD OPTIMIZED) */}
+      {/* 8. BOTTOM INPUT BAR (MOBILE VIRTUAL KEYBOARD OPTIMIZED) */}
       <footer className="p-2 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F] pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
         <div className="max-w-4xl mx-auto flex items-end gap-1.5 sm:gap-2">
           {/* File input (Camera or Gallery) */}
@@ -592,7 +739,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               onPaste={handlePaste}
               onKeyDown={handleKeyDown}
               placeholder={
-                selectedFile
+                editingMessage
+                  ? 'Измените текст сообщения...'
+                  : selectedFile
                   ? 'Добавьте подпись к фото...'
                   : 'Написать сообщение... (Enter для отправки)'
               }
@@ -609,15 +758,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </button>
           </div>
 
-          {/* Send button with Uploading spinner */}
+          {/* Send or Save Edit button */}
           <button
             onClick={() => handleSend()}
             disabled={(!inputContent.trim() && !selectedFile) || isUploading || isCompressing}
             className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF9500] to-[#FF5500] hover:from-[#E66E00] hover:to-[#E03D00] disabled:opacity-40 disabled:pointer-events-none text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-[#FF7A00]/30 transition-transform active:scale-95"
-            title="Отправить (Enter)"
+            title={editingMessage ? 'Сохранить изменения' : 'Отправить (Enter)'}
           >
             {isUploading ? (
               <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : editingMessage ? (
+              <Check className="w-5 h-5" />
             ) : (
               <Send className="w-4.5 h-4.5 ml-0.5" />
             )}
@@ -637,6 +788,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           onClose={() => setViewingMedia(null)}
         />
       )}
+
+      {/* TELEGRAM-STYLE MESSAGE CONTEXT MENU (PKM / MOBILE TAP) */}
+      <AnimatePresence>
+        {contextMenu && (
+          <MessageContextMenu
+            isOpen={Boolean(contextMenu)}
+            message={contextMenu.message}
+            position={contextMenu.position}
+            isOutgoing={contextMenu.message.sender_id === user?.id}
+            isOwnerOrMod={isOwnerOrMod}
+            onClose={() => setContextMenu(null)}
+            onReply={handleStartReply}
+            onEdit={handleStartEdit}
+            onPin={(msg) => setPinnedMessage(msg)}
+            onDelete={(id) => deleteMessage(id)}
+            onReact={async (msg, emoji) => {
+              if (sendSoundEnabled) soundEffects.playSent();
+              // Optionally send reaction or quick reply
+              await sendMessage(activeChat.id, `${emoji}`);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </main>
   );
 };

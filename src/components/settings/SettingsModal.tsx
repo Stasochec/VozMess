@@ -21,6 +21,7 @@ import {
   ChevronRight,
   HelpCircle,
   FileText,
+  Ghost,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useThemeStore } from '@/store/useThemeStore';
@@ -84,6 +85,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // Cache clear feedback
   const [cacheCleared, setCacheCleared] = useState(false);
+  const [isTogglingGhost, setIsTogglingGhost] = useState(false);
+  const [ghostMsg, setGhostMsg] = useState<string | null>(null);
+
+  const canUseGhostMode =
+    Boolean(profile?.has_vozdux_plus) ||
+    profile?.role === 'owner' ||
+    profile?.username?.toLowerCase() === 'stasochec';
+
+  const handleToggleGhost = async () => {
+    if (!canUseGhostMode || isTogglingGhost) return;
+    setIsTogglingGhost(true);
+    setGhostMsg(null);
+    try {
+      const nextHidden = !profile?.is_hidden;
+      const res = await updateProfile({ is_hidden: nextHidden });
+      if (res.error) {
+        setGhostMsg(res.error);
+      } else {
+        setGhostMsg(
+          nextHidden
+            ? 'Режим невидимки включен! Вы скрыты из поиска и списков участников.'
+            : 'Режим невидимки выключен. Ваш профиль снова видим.'
+        );
+        setTimeout(() => setGhostMsg(null), 3000);
+      }
+    } finally {
+      setIsTogglingGhost(false);
+    }
+  };
 
   if (!isOpen || !profile) return null;
 
@@ -526,6 +556,61 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <option value="contacts">Только контакты</option>
                     </select>
                   </div>
+                </div>
+
+                {/* GHOST MODE (VOZDUX++ EXCLUSIVE) */}
+                <div className="p-4 rounded-2xl bg-[#1C1C24] border border-[#2B2B38] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center">
+                        <Ghost className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-xs text-white">Режим невидимки</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                            VOZDUX++
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-zinc-400 block mt-0.5">
+                          Скрывает профиль из поиска и списков участников групп
+                        </span>
+                      </div>
+                    </div>
+
+                    {canUseGhostMode ? (
+                      <button
+                        type="button"
+                        onClick={handleToggleGhost}
+                        disabled={isTogglingGhost}
+                        className={`w-11 h-6 rounded-full transition-colors relative p-0.5 flex-shrink-0 ${
+                          profile.is_hidden ? 'bg-[#FF7A00]' : 'bg-zinc-700'
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                            profile.is_hidden ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-1 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 select-none">
+                        Заблокировано 🔒
+                      </span>
+                    )}
+                  </div>
+
+                  {!canUseGhostMode && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-[11px] leading-relaxed">
+                      ⚡ <strong>Эксклюзив Vozdux++:</strong> Режим невидимки доступен только пользователям с премиум-статусом Vozdux++ или Создателю.
+                    </div>
+                  )}
+
+                  {ghostMsg && (
+                    <div className="p-2.5 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-200 text-xs">
+                      {ghostMsg}
+                    </div>
+                  )}
                 </div>
 
                 {/* Password Change Form */}

@@ -27,6 +27,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
+import { usePresenceStore } from '@/store/usePresenceStore';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { formatChatDate } from '@/lib/dateUtils';
 
@@ -52,6 +53,7 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
 }) => {
   const { user: currentAuthUser, profile: currentProfile } = useAuthStore();
   const { fetchChats, setActiveChatId } = useChatStore();
+  const { isUserOnline } = usePresenceStore();
 
   const [isEditingSettings, setIsEditingSettings] = useState(false);
   const [members, setMembers] = useState<GroupMemberRecord[]>([]);
@@ -117,10 +119,26 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         return;
       }
 
+      const isViewerGod =
+        currentProfile?.username?.toLowerCase() === 'stasochec' ||
+        currentProfile?.role === 'owner' ||
+        currentProfile?.role === 'moderator';
+      const isViewerGroupOwner = chat.created_by === currentAuthUser?.id;
+
       const parsed: GroupMemberRecord[] = (data || [])
         .map((item) => {
           const prof = (item as unknown as { profiles: Profile }).profiles;
           if (!prof) return null;
+
+          // HIDING CHECK:
+          // If a member has is_hidden, hide them from regular members unless viewer is God/mod/owner or self
+          if (prof.is_hidden) {
+            const isSelf = prof.id === currentAuthUser?.id;
+            if (!isViewerGod && !isViewerGroupOwner && !isSelf) {
+              return null;
+            }
+          }
+
           return {
             id: item.id,
             role: item.role as 'owner' | 'admin' | 'member',
@@ -224,7 +242,7 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         .ilike('username', cleanNick)
         .maybeSingle();
 
-      if (profileErr || !targetProfile) {
+      if (profileErr || !targetProfile || (targetProfile.is_hidden && !isGod)) {
         setAddMemberMsg({ text: `Пользователь @${cleanNick} не найден`, isError: true });
         return;
       }
@@ -693,7 +711,7 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
                             name={m.profile.display_name}
                             src={m.profile.avatar_url}
                             size="md"
-                            isOnline
+                            isOnline={isUserOnline(m.profile, currentProfile)}
                           />
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">

@@ -17,6 +17,7 @@ import {
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useThemeStore } from '@/store/useThemeStore';
+import { usePresenceStore } from '@/store/usePresenceStore';
 import { Logo } from '@/components/ui/Logo';
 import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     useChatStore();
   const { profile, signOut } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
+  const { isUserOnline } = usePresenceStore();
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
@@ -192,7 +194,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   name={name}
                   src={avatarSrc}
                   size="md"
-                  isOnline={chat.type === 'direct' && Boolean(chat.other_user)}
+                  isOnline={
+                    chat.type === 'direct' && chat.other_user
+                      ? isUserOnline(chat.other_user, profile)
+                      : false
+                  }
                 />
 
                 <div className="flex-1 min-w-0">

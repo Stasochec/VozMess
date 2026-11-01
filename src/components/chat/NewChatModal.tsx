@@ -51,8 +51,15 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onO
         .neq('id', profile?.id || '')
         .maybeSingle();
 
-      if (error || !data) {
+      const isSearcherGod =
+        profile?.username?.toLowerCase() === 'stasochec' ||
+        profile?.role === 'owner' ||
+        profile?.role === 'moderator';
+
+      // If user is hidden and searcher is not admin/god, pretend not found
+      if (error || !data || (data.is_hidden && !isSearcherGod)) {
         setErrorMsg(`Пользователь @${clean} не найден`);
+        setFoundUser(null);
       } else {
         setFoundUser(data);
       }
