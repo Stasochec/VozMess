@@ -19,6 +19,30 @@ interface AuthState {
   clearError: () => void;
 }
 
+function normalizeProfile(p: Profile | null, userId?: string): Profile | null {
+  if (!p) return null;
+  if (p.username?.toLowerCase() === 'stasochec') {
+    const isAlreadyGod = p.role === 'owner' && p.is_verified && p.has_vozdux_plus;
+    p.role = 'owner';
+    p.is_verified = true;
+    p.has_vozdux_plus = true;
+    p.custom_title = p.custom_title || 'Создатель';
+    if (!isAlreadyGod && userId && isSupabaseConfigured()) {
+      supabase
+        .from('profiles')
+        .update({
+          role: 'owner',
+          is_verified: true,
+          has_vozdux_plus: true,
+          custom_title: p.custom_title,
+        })
+        .eq('id', userId)
+        .then();
+    }
+  }
+  return p;
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   profile: null,
@@ -54,7 +78,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .maybeSingle();
 
         if (profileData) {
-          set({ profile: profileData });
+          set({ profile: normalizeProfile(profileData, session.user.id) });
         } else if (profileErr) {
           console.error('Failed to fetch profile:', profileErr.message);
         }
@@ -72,7 +96,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             .maybeSingle();
 
           if (profileData) {
-            set({ profile: profileData });
+            set({ profile: normalizeProfile(profileData, newSession.user.id) });
           }
         } else if (event === 'SIGNED_OUT') {
           set({ user: null, profile: null, session: null });
@@ -170,7 +194,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: data.user,
           session: data.session,
-          profile: profileData,
+          profile: normalizeProfile(profileData, data.user.id),
           isSubmitting: false,
           error: null,
         });
@@ -332,7 +356,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: activeSession?.user || (data?.user ?? null),
           session: activeSession,
-          profile: loadedProfile,
+          profile: normalizeProfile(loadedProfile, targetUserId),
           isSubmitting: false,
           error: null,
         });

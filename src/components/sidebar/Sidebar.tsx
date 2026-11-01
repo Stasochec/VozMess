@@ -41,7 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   // Strict God check: only @stasochec with owner role
-  const isGod = profile?.role === 'owner' && profile?.username?.toLowerCase() === 'stasochec';
+  const isGod = Boolean(profile?.username?.trim().toLowerCase() === 'stasochec' || profile?.role === 'owner');
 
   // Filter chats by folder tab and search query
   const filteredChats = chats.filter((chat) => {

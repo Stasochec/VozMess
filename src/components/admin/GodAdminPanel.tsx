@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Crown,
@@ -30,13 +30,7 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   const { profile } = useAuthStore();
   const { broadcastAnnouncement } = useChatStore();
 
-  // 1. STRICT GUARD: Physical return null if not @stasochec with owner role
-  if (profile?.role !== 'owner' || profile?.username?.toLowerCase() !== 'stasochec') {
-    return null;
-  }
-
-  if (!isOpen) return null;
-
+  // All React hooks MUST be declared at the top unconditionally (React Rules of Hooks)
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [targetUser, setTargetUser] = useState<Profile | null>(null);
@@ -52,6 +46,26 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   // Broadcast state
   const [broadcastText, setBroadcastText] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  // Strict God check: only @stasochec or role 'owner'
+  const isGod =
+    profile?.username?.trim().toLowerCase() === 'stasochec' ||
+    profile?.role === 'owner';
+
+  // Physical return null if modal is closed OR if user is not God
+  if (!isOpen || !isGod) {
+    return null;
+  }
 
   const showNotification = (msg: string) => {
     setSuccessMessage(msg);
@@ -203,7 +217,12 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md"
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}

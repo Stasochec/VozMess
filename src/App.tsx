@@ -12,6 +12,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
 import { useThemeStore } from '@/store/useThemeStore';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 
 function MessengerScreen() {
   const { init: initAuth, user, isInitialLoading } = useAuthStore();
@@ -103,19 +104,27 @@ function MessengerScreen() {
       </div>
 
       {/* Modals */}
-      <GodAdminPanel isOpen={isGodPanelOpen} onClose={() => setIsGodPanelOpen(false)} />
-      <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
-      <NewChatModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} />
+      {isGodPanelOpen && (
+        <GodAdminPanel isOpen={isGodPanelOpen} onClose={() => setIsGodPanelOpen(false)} />
+      )}
+      {isProfileOpen && (
+        <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
+      )}
+      {isNewChatOpen && (
+        <NewChatModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} />
+      )}
     </div>
   );
 }
 
 export default function App() {
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="*" element={<MessengerScreen />} />
-      </Routes>
-    </HashRouter>
+    <ErrorBoundary>
+      <HashRouter>
+        <Routes>
+          <Route path="*" element={<MessengerScreen />} />
+        </Routes>
+      </HashRouter>
+    </ErrorBoundary>
   );
 }
