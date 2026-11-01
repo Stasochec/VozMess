@@ -239,11 +239,30 @@ BEGIN
     END IF;
 
     -- Если аккаунт не был подтвержден из-за лимита Supabase email rate limit:
-    -- Подтверждаем email и обновляем пароль
+    -- Подтверждаем email, обновляем пароль и очищаем NULL в токенах
     UPDATE auth.users
     SET email_confirmed_at = NOW(),
-        encrypted_password = encrypted_pw
+        encrypted_password = encrypted_pw,
+        confirmation_token = COALESCE(confirmation_token, ''),
+        recovery_token = COALESCE(recovery_token, ''),
+        email_change_token_current = COALESCE(email_change_token_current, ''),
+        email_change_token_new = COALESCE(email_change_token_new, ''),
+        email_change = COALESCE(email_change, ''),
+        phone_change_token = COALESCE(phone_change_token, ''),
+        phone_change = COALESCE(phone_change, ''),
+        reauthentication_token = COALESCE(reauthentication_token, ''),
+        is_sso_user = COALESCE(is_sso_user, FALSE),
+        is_anonymous = COALESCE(is_anonymous, FALSE)
     WHERE id = existing_user_id;
+
+    -- Создаем identity, если отсутствует
+    IF NOT EXISTS (SELECT 1 FROM auth.identities WHERE user_id = existing_user_id) THEN
+      INSERT INTO auth.identities (
+        id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at
+      ) VALUES (
+        gen_random_uuid(), existing_user_id, jsonb_build_object('sub', existing_user_id::text, 'email', clean_email), 'email', existing_user_id::text, NOW(), NOW(), NOW()
+      );
+    END IF;
 
     -- Убеждаемся, что в profiles есть запись
     IF NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = existing_user_id) THEN
@@ -279,6 +298,7 @@ BEGIN
 
   new_user_id := gen_random_uuid();
 
+  -- Вставляем пользователя с ВСЕМИ строковыми полями (не NULL, а ''), чтобы GoTrue не падал с 500 Database error querying schema
   INSERT INTO auth.users (
     id,
     instance_id,
@@ -292,7 +312,15 @@ BEGIN
     created_at,
     updated_at,
     confirmation_token,
-    recovery_token
+    recovery_token,
+    email_change_token_current,
+    email_change_token_new,
+    email_change,
+    phone_change_token,
+    phone_change,
+    reauthentication_token,
+    is_sso_user,
+    is_anonymous
   ) VALUES (
     new_user_id,
     '00000000-0000-0000-0000-000000000000',
@@ -309,7 +337,36 @@ BEGIN
     NOW(),
     NOW(),
     '',
-    ''
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    FALSE,
+    FALSE
+  );
+
+  -- Обязательно вставляем запись identity в auth.identities
+  INSERT INTO auth.identities (
+    id,
+    user_id,
+    identity_data,
+    provider,
+    provider_id,
+    last_sign_in_at,
+    created_at,
+    updated_at
+  ) VALUES (
+    gen_random_uuid(),
+    new_user_id,
+    jsonb_build_object('sub', new_user_id::text, 'email', clean_email),
+    'email',
+    new_user_id::text,
+    NOW(),
+    NOW(),
+    NOW()
   );
 
   RETURN jsonb_build_object('success', true, 'user_id', new_user_id, 'status', 'created_new');
@@ -360,8 +417,29 @@ BEGIN
   END IF;
 
   UPDATE auth.users
-  SET email_confirmed_at = NOW()
+  SET email_confirmed_at = NOW(),
+      confirmation_token = COALESCE(confirmation_token, ''),
+      recovery_token = COALESCE(recovery_token, ''),
+      email_change_token_current = COALESCE(email_change_token_current, ''),
+      email_change_token_new = COALESCE(email_change_token_new, ''),
+      email_change = COALESCE(email_change, ''),
+      phone_change_token = COALESCE(phone_change_token, ''),
+      phone_change = COALESCE(phone_change, ''),
+      reauthentication_token = COALESCE(reauthentication_token, ''),
+      is_sso_user = COALESCE(is_sso_user, FALSE),
+      is_anonymous = COALESCE(is_anonymous, FALSE)
   WHERE id = target_user_id;
+
+  -- Создаем identity, если отсутствовала
+  IF NOT EXISTS (SELECT 1 FROM auth.identities WHERE user_id = target_user_id) THEN
+    INSERT INTO auth.identities (
+      id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at
+    )
+    SELECT
+      gen_random_uuid(), u.id, jsonb_build_object('sub', u.id::text, 'email', u.email), 'email', u.id::text, NOW(), NOW(), NOW()
+    FROM auth.users u
+    WHERE u.id = target_user_id;
+  END IF;
 
   RETURN jsonb_build_object('success', true, 'user_id', target_user_id);
 EXCEPTION WHEN OTHERS THEN
@@ -701,3 +779,82 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role
 
 NOTIFY pgrst, 'reload config';
 NOTIFY pgrst, 'reload schema';
+
+-- ==============================================================================
+-- 14. ЛЕЧЕНИЕ "500: Database error querying schema" В SUPABASE AUTH (GOTRUE)
+-- GoTrue падает с ошибкой "Database error querying schema", если в auth.users
+-- строковые поля токенов равны NULL (Go struct Scan converting NULL to string).
+-- ==============================================================================
+
+-- 14.1 Очищаем NULL во всех существующих записях auth.users
+UPDATE auth.users
+SET
+  confirmation_token = COALESCE(confirmation_token, ''),
+  recovery_token = COALESCE(recovery_token, ''),
+  email_change_token_current = COALESCE(email_change_token_current, ''),
+  email_change_token_new = COALESCE(email_change_token_new, ''),
+  email_change = COALESCE(email_change, ''),
+  phone_change_token = COALESCE(phone_change_token, ''),
+  phone_change = COALESCE(phone_change, ''),
+  reauthentication_token = COALESCE(reauthentication_token, ''),
+  is_sso_user = COALESCE(is_sso_user, FALSE),
+  is_anonymous = COALESCE(is_anonymous, FALSE)
+WHERE
+  confirmation_token IS NULL
+  OR recovery_token IS NULL
+  OR email_change_token_current IS NULL
+  OR email_change_token_new IS NULL
+  OR email_change IS NULL
+  OR phone_change_token IS NULL
+  OR phone_change IS NULL
+  OR reauthentication_token IS NULL
+  OR is_sso_user IS NULL
+  OR is_anonymous IS NULL;
+
+-- 14.2 Восстанавливаем identities для пользователей без identity
+INSERT INTO auth.identities (
+  id,
+  user_id,
+  identity_data,
+  provider,
+  provider_id,
+  last_sign_in_at,
+  created_at,
+  updated_at
+)
+SELECT
+  gen_random_uuid(),
+  u.id,
+  jsonb_build_object('sub', u.id::text, 'email', u.email),
+  'email',
+  u.id::text,
+  NOW(),
+  NOW(),
+  NOW()
+FROM auth.users u
+WHERE NOT EXISTS (
+  SELECT 1 FROM auth.identities i WHERE i.user_id = u.id
+);
+
+-- 14.3 Защитный триггер: никогда не допускать NULL в строковых полях auth.users
+CREATE OR REPLACE FUNCTION public.clean_auth_user_nulls()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.confirmation_token := COALESCE(NEW.confirmation_token, '');
+  NEW.recovery_token := COALESCE(NEW.recovery_token, '');
+  NEW.email_change_token_current := COALESCE(NEW.email_change_token_current, '');
+  NEW.email_change_token_new := COALESCE(NEW.email_change_token_new, '');
+  NEW.email_change := COALESCE(NEW.email_change, '');
+  NEW.phone_change_token := COALESCE(NEW.phone_change_token, '');
+  NEW.phone_change := COALESCE(NEW.phone_change, '');
+  NEW.reauthentication_token := COALESCE(NEW.reauthentication_token, '');
+  NEW.is_sso_user := COALESCE(NEW.is_sso_user, FALSE);
+  NEW.is_anonymous := COALESCE(NEW.is_anonymous, FALSE);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS tr_clean_auth_user_nulls ON auth.users;
+CREATE TRIGGER tr_clean_auth_user_nulls
+  BEFORE INSERT OR UPDATE ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.clean_auth_user_nulls();
