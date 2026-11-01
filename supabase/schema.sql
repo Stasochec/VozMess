@@ -1,7 +1,7 @@
 -- ==============================================================================
 -- VOZDUXAN MESSENGER DATABASE SCHEMA (SUPABASE)
 -- Чистый production-скрипт с защитой для создателя @stasochec («Панель Бога»)
--- Запускается в один клик в Supabase SQL Editor
+-- Запускается в один клик в Supabase SQL Editor (100% идемпотентный)
 -- ==============================================================================
 
 -- 1. РАСШИРЕНИЯ
@@ -194,25 +194,26 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Расписание pg_cron (каждый час)
+-- Расписание pg_cron (каждый час, с корректной обработкой вложенных блоков в PL/pgSQL)
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
-    PERFORM cron.unschedule('clean-expired-messages-hourly');
-  EXCEPTION WHEN OTHERS THEN NULL;
-  END;
+    BEGIN
+      PERFORM cron.unschedule('clean-expired-messages-hourly');
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
 
-  BEGIN
-    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    BEGIN
       PERFORM cron.schedule(
         'clean-expired-messages-hourly',
         '0 * * * *',
         'SELECT public.delete_expired_messages();'
       );
-    END IF;
-  EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'Skipping cron schedule registration.';
-  END;
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END IF;
 END $$;
 
 -- 9. STORAGE: БАКЕТ chat-media И ТРИГГЕР НА АВТОУДАЛЕНИЕ ФАЙЛОВ
@@ -220,15 +221,18 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('chat-media', 'chat-media', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
+DROP POLICY IF EXISTS "Public Read chat-media" ON storage.objects;
 CREATE POLICY "Public Read chat-media"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'chat-media');
 
+DROP POLICY IF EXISTS "Authenticated Upload chat-media" ON storage.objects;
 CREATE POLICY "Authenticated Upload chat-media"
 ON storage.objects FOR INSERT
 TO authenticated
 WITH CHECK (bucket_id = 'chat-media');
 
+DROP POLICY IF EXISTS "Authenticated Delete chat-media" ON storage.objects;
 CREATE POLICY "Authenticated Delete chat-media"
 ON storage.objects FOR DELETE
 TO authenticated
@@ -327,12 +331,14 @@ ALTER TABLE public.chat_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
 -- Профили: чтение всем авторизованным
+DROP POLICY IF EXISTS "Profiles readable by authenticated" ON public.profiles;
 CREATE POLICY "Profiles readable by authenticated"
 ON public.profiles FOR SELECT
 TO authenticated
 USING (true);
 
 -- Профили: пользователь обновляет только свои данные, если не owner
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile"
 ON public.profiles FOR UPDATE
 TO authenticated
@@ -350,6 +356,7 @@ WITH CHECK (
 );
 
 -- Профили: Создатель @stasochec («Панель Бога») может обновлять любые профили
+DROP POLICY IF EXISTS "God can update any profile" ON public.profiles;
 CREATE POLICY "God can update any profile"
 ON public.profiles FOR UPDATE
 TO authenticated
@@ -371,6 +378,7 @@ WITH CHECK (
 );
 
 -- Чаты: чтение участникам
+DROP POLICY IF EXISTS "Chats visible to participants" ON public.chats;
 CREATE POLICY "Chats visible to participants"
 ON public.chats FOR SELECT
 TO authenticated
@@ -384,12 +392,14 @@ USING (
 );
 
 -- Чаты: создание
+DROP POLICY IF EXISTS "Authenticated users can create chats" ON public.chats;
 CREATE POLICY "Authenticated users can create chats"
 ON public.chats FOR INSERT
 TO authenticated
 WITH CHECK (true);
 
 -- Чаты: обновление
+DROP POLICY IF EXISTS "Participants can update chats" ON public.chats;
 CREATE POLICY "Participants can update chats"
 ON public.chats FOR UPDATE
 TO authenticated
@@ -402,6 +412,7 @@ USING (
 );
 
 -- Участники чатов: чтение
+DROP POLICY IF EXISTS "Members visible to chat participants" ON public.chat_members;
 CREATE POLICY "Members visible to chat participants"
 ON public.chat_members FOR SELECT
 TO authenticated
@@ -415,18 +426,21 @@ USING (
 );
 
 -- Участники чатов: добавление
+DROP POLICY IF EXISTS "Users can join or add members" ON public.chat_members;
 CREATE POLICY "Users can join or add members"
 ON public.chat_members FOR INSERT
 TO authenticated
 WITH CHECK (true);
 
 -- Участники чатов: удаление
+DROP POLICY IF EXISTS "Users can leave chats" ON public.chat_members;
 CREATE POLICY "Users can leave chats"
 ON public.chat_members FOR DELETE
 TO authenticated
 USING (user_id = auth.uid());
 
 -- Сообщения: чтение участникам чата
+DROP POLICY IF EXISTS "Messages readable by chat members" ON public.messages;
 CREATE POLICY "Messages readable by chat members"
 ON public.messages FOR SELECT
 TO authenticated
@@ -439,6 +453,7 @@ USING (
 );
 
 -- Сообщения: отправка участникам чата
+DROP POLICY IF EXISTS "Messages insertable by chat members" ON public.messages;
 CREATE POLICY "Messages insertable by chat members"
 ON public.messages FOR INSERT
 TO authenticated
@@ -452,6 +467,7 @@ WITH CHECK (
 );
 
 -- Сообщения: удаление автором, модератором или Богом (@stasochec)
+DROP POLICY IF EXISTS "Authors, mods or God can delete messages" ON public.messages;
 CREATE POLICY "Authors, mods or God can delete messages"
 ON public.messages FOR DELETE
 TO authenticated
