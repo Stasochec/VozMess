@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.vozduxan.twa",
+        "sha256_cert_fingerprints": ["93:05:42:28:8E:05:F0:76:EB:68:F8:4F:A2:FA:EC:45:40:AD:1C:53:84:74:F6:36:F3:D1:F7:AF:06:9D:71:E2"]
+      }
+    }]
