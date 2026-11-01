@@ -188,6 +188,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onO
                           username={foundUser.username}
                           isVerified={foundUser.is_verified}
                           hasVozduxPlus={foundUser.has_vozdux_plus}
+                          isHidden={foundUser.is_hidden}
                         />
                       </div>
                       <span className="text-[11px] text-[#FF8A1C]">@{foundUser.username}</span>

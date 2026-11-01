@@ -287,6 +287,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     username={activeChat.other_user.username}
                     isVerified={activeChat.other_user.is_verified}
                     hasVozduxPlus={activeChat.other_user.has_vozdux_plus}
+                    isHidden={activeChat.other_user.is_hidden}
                     customTitle={activeChat.other_user.custom_title}
                     showRoleText
                   />

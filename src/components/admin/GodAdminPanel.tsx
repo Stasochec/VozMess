@@ -13,6 +13,9 @@ import {
   Edit3,
   Flame,
   MailCheck,
+  Ghost,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
@@ -42,6 +45,11 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
   const [confirmEmailInput, setConfirmEmailInput] = useState('');
   const [isConfirmingEmail, setIsConfirmingEmail] = useState(false);
   const [confirmEmailError, setConfirmEmailError] = useState<string | null>(null);
+
+  // Quick Ghost (Hidden) Mode state
+  const [ghostUsernameInput, setGhostUsernameInput] = useState('');
+  const [isGhostLoading, setIsGhostLoading] = useState(false);
+  const [ghostError, setGhostError] = useState<string | null>(null);
 
   // Broadcast state
   const [broadcastText, setBroadcastText] = useState('');
@@ -168,6 +176,116 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     if (!error) {
       setTargetUser({ ...targetUser, custom_title: titleVal });
       showNotification(`Кастомный титул сохранен для @${targetUser.username}`);
+    }
+  };
+
+  // 1-Click Toggle Hidden (Ghost Mode) on targetUser
+  const handleToggleHidden = async () => {
+    if (!targetUser) return;
+    const nextVal = !targetUser.is_hidden;
+
+    // Prevent hiding the main creator @stasochec
+    if (targetUser.username?.toLowerCase() === 'stasochec' && nextVal) {
+      alert('Нельзя скрыть аккаунт главного создателя @stasochec');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('admin_set_user_hidden', {
+        p_target: targetUser.username,
+        p_is_hidden: nextVal,
+      });
+
+      if (!error && data?.success) {
+        setTargetUser({ ...targetUser, is_hidden: nextVal });
+        showNotification(
+          nextVal
+            ? `👻 Аккаунт @${targetUser.username} теперь СКРЫТ для всех (кроме вас и модераторов)`
+            : `👁️ Аккаунт @${targetUser.username} снова видим для всех пользователей`
+        );
+        return;
+      }
+    } catch (e) {
+      console.warn('RPC admin_set_user_hidden fallback:', e);
+    }
+
+    // Direct update fallback (Owner policy permits update)
+    const { error: updateErr } = await supabase
+      .from('profiles')
+      .update({ is_hidden: nextVal })
+      .eq('id', targetUser.id);
+
+    if (!updateErr) {
+      setTargetUser({ ...targetUser, is_hidden: nextVal });
+      showNotification(
+        nextVal
+          ? `👻 Аккаунт @${targetUser.username} теперь СКРЫТ для всех (кроме вас и модераторов)`
+          : `👁️ Аккаунт @${targetUser.username} снова видим для всех пользователей`
+      );
+    } else {
+      alert(updateErr.message || 'Ошибка обновления статуса видимости');
+    }
+  };
+
+  // Quick set hidden / unhidden by username without searching first
+  const handleQuickSetHidden = async (forceHidden?: boolean) => {
+    const raw = ghostUsernameInput.trim().replace(/^@/, '').toLowerCase();
+    if (!raw) return;
+
+    if (raw === 'stasochec' && forceHidden !== false) {
+      setGhostError('Нельзя скрыть аккаунт главного создателя @stasochec');
+      return;
+    }
+
+    setIsGhostLoading(true);
+    setGhostError(null);
+
+    try {
+      const { data: userRecord, error: findErr } = await supabase
+        .from('profiles')
+        .select('id, username, is_hidden')
+        .ilike('username', raw)
+        .maybeSingle();
+
+      if (findErr || !userRecord) {
+        setGhostError(`Пользователь @${raw} не найден в базе данных`);
+        return;
+      }
+
+      const nextVal = forceHidden !== undefined ? forceHidden : !userRecord.is_hidden;
+
+      const { data, error } = await supabase.rpc('admin_set_user_hidden', {
+        p_target: userRecord.username,
+        p_is_hidden: nextVal,
+      });
+
+      if (error || !data?.success) {
+        const { error: updErr } = await supabase
+          .from('profiles')
+          .update({ is_hidden: nextVal })
+          .eq('id', userRecord.id);
+
+        if (updErr) {
+          setGhostError(updErr.message);
+          return;
+        }
+      }
+
+      showNotification(
+        nextVal
+          ? `👻 Аккаунт @${userRecord.username} успешно СКРЫТ (невидим для обычных пользователей)!`
+          : `👁️ Аккаунт @${userRecord.username} теперь ВИДИМ для всех!`
+      );
+
+      if (targetUser && targetUser.username.toLowerCase() === raw) {
+        setTargetUser({ ...targetUser, is_hidden: nextVal });
+      }
+
+      setGhostUsernameInput('');
+    } catch (err: unknown) {
+      setGhostError(err instanceof Error ? err.message : 'Ошибка выполнения операции');
+    } finally {
+      setIsGhostLoading(false);
     }
   };
 
@@ -344,6 +462,7 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
                           username={targetUser.username}
                           isVerified={targetUser.is_verified}
                           hasVozduxPlus={targetUser.has_vozdux_plus}
+                          isHidden={targetUser.is_hidden}
                           customTitle={targetUser.custom_title}
                           showRoleText
                         />
@@ -360,7 +479,7 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
                 </div>
 
                 {/* 1-Click Action Toggles */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
                   {/* 1. Toggle Vozdux++ */}
                   <button
                     onClick={handleToggleVozduxPlus}
@@ -414,6 +533,25 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
                       {targetUser.role === 'moderator' ? '● НАЗНАЧЕН' : '○ Обычный юзер'}
                     </span>
                   </button>
+
+                  {/* 4. Toggle Hidden / Ghost Mode */}
+                  <button
+                    onClick={handleToggleHidden}
+                    className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
+                      targetUser.is_hidden
+                        ? 'bg-gradient-to-b from-[#2C103B] to-[#1B0A25] border-purple-500/60 text-white shadow-[0_0_14px_rgba(168,85,247,0.35)]'
+                        : 'bg-[#1E1E28] border-[#2C2C3A] text-zinc-400 hover:border-zinc-500'
+                    }`}
+                    title="Скрыть аккаунт для всех, кроме создателя и модераторов"
+                  >
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-purple-300">
+                      <Ghost className="w-4 h-4" />
+                      <span>Невидимка</span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-purple-400">
+                      {targetUser.is_hidden ? '● СКРЫТ ДЛЯ ВСЕХ' : '○ Видим всем'}
+                    </span>
+                  </button>
                 </div>
 
                 {/* Custom Title Input */}
@@ -442,7 +580,60 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
             )}
           </div>
 
-          {/* SECTION 2: MANUAL EMAIL CONFIRMATION */}
+          {/* SECTION 2: GHOST MODE (HIDE/UNHIDE BY USERNAME) */}
+          <div className="pt-4 border-t border-[#2C2C38] space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">
+                <Ghost className="w-4 h-4 text-purple-400" />
+                Режим невидимки (Скрытые аккаунты)
+              </h3>
+              <span className="text-[11px] text-purple-400 font-semibold flex items-center gap-1">
+                <EyeOff className="w-3.5 h-3.5" /> Видны только создателю и модераторам
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl bg-gradient-to-br from-[#1C1224] to-[#140D1A] border border-[#3A244D] space-y-3">
+              <p className="text-xs text-zinc-400">
+                Сделайте аккаунт любого пользователя скрытым и не находимым через поиск для обычных пользователей. Аккаунт останется доступным и видимым только для вас (@stasochec) и модераторов.
+              </p>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={ghostUsernameInput}
+                  onChange={(e) => setGhostUsernameInput(e.target.value)}
+                  placeholder="Введите @username для скрытия или показа..."
+                  className="flex-1 px-3.5 py-2.5 bg-[#100B17] border border-[#37234A] rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleQuickSetHidden(true)}
+                  disabled={isGhostLoading || !ghostUsernameInput.trim()}
+                  className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-colors shadow-md shadow-purple-600/30 flex items-center gap-1.5"
+                  title="Сделать аккаунт скрытым для обычных пользователей"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>{isGhostLoading ? '...' : 'Скрыть'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickSetHidden(false)}
+                  disabled={isGhostLoading || !ghostUsernameInput.trim()}
+                  className="px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 text-zinc-200 font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5"
+                  title="Сделать аккаунт снова видимым для всех"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Показать</span>
+                </button>
+              </div>
+
+              {ghostError && (
+                <p className="text-xs text-rose-400 font-medium pl-1">{ghostError}</p>
+              )}
+            </div>
+          </div>
+
+          {/* SECTION 3: MANUAL EMAIL CONFIRMATION */}
           <div className="pt-4 border-t border-[#2C2C38] space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-2">

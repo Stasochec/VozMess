@@ -135,12 +135,26 @@ export const CustomTitleBadge: React.FC<{ title: string; className?: string }> =
   );
 };
 
-// 5. COMBINED USER BADGES ROW
+// 5. GHOST / HIDDEN ACCOUNT BADGE (Только для создателя и модераторов)
+export const HiddenBadge: React.FC<{ className?: string }> = ({ className = '' }) => {
+  return (
+    <span
+      title="Скрытый профиль (Ghost Mode) — невидим для обычных пользователей"
+      className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/35 shadow-[0_0_8px_rgba(168,85,247,0.3)] ${className}`}
+    >
+      <span>👻</span>
+      <span>Скрыт</span>
+    </span>
+  );
+};
+
+// 6. COMBINED USER BADGES ROW
 interface UserBadgesProps {
   role?: UserRole;
   username?: string | null;
   isVerified?: boolean;
   hasVozduxPlus?: boolean;
+  isHidden?: boolean;
   customTitle?: string | null;
   showRoleText?: boolean;
   className?: string;
@@ -151,6 +165,7 @@ export const UserBadges: React.FC<UserBadgesProps> = ({
   username,
   isVerified = false,
   hasVozduxPlus = false,
+  isHidden = false,
   customTitle = null,
   showRoleText = false,
   className = '',
@@ -164,6 +179,7 @@ export const UserBadges: React.FC<UserBadgesProps> = ({
       )}
       {(isVerified || isGod) && <VerifiedBadge size={16} />}
       {(hasVozduxPlus || isGod) && <VozduxPlusBadge size={16} />}
+      {isHidden && <HiddenBadge />}
       {customTitle && <CustomTitleBadge title={customTitle} />}
     </div>
   );

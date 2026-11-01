@@ -152,6 +152,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               username={user.username}
               isVerified={user.is_verified}
               hasVozduxPlus={user.has_vozdux_plus}
+              isHidden={user.is_hidden}
               customTitle={user.custom_title}
               showRoleText
             />

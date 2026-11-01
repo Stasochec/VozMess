@@ -388,6 +388,7 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
                             username={m.profile.username}
                             isVerified={m.profile.is_verified}
                             hasVozduxPlus={m.profile.has_vozdux_plus}
+                            isHidden={m.profile.is_hidden}
                           />
                         </div>
                         <div className="flex items-center gap-2 text-[11px] text-zinc-500">

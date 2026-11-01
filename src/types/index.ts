@@ -11,6 +11,7 @@ export interface Profile {
   custom_title?: string | null;
   is_verified: boolean;
   has_vozdux_plus: boolean;
+  is_hidden?: boolean;
   created_at: string;
   last_seen: string;
 }

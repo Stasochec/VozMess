@@ -27,9 +27,12 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   custom_title TEXT DEFAULT NULL,
   is_verified BOOLEAN NOT NULL DEFAULT FALSE,
   has_vozdux_plus BOOLEAN NOT NULL DEFAULT FALSE,
+  is_hidden BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_profiles_username_lower ON public.profiles(LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON public.profiles(role);
@@ -448,6 +451,58 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.admin_confirm_user_email(TEXT) TO anon, authenticated;
+
+-- 7.3 РЕЖИМ НЕВИДИМКИ: СКРЫТИЕ АККАУНТА СОЗДАТЕЛЕМ (@stasochec)
+DROP FUNCTION IF EXISTS public.admin_set_user_hidden(TEXT, BOOLEAN);
+CREATE OR REPLACE FUNCTION public.admin_set_user_hidden(
+  p_target TEXT,
+  p_is_hidden BOOLEAN
+)
+RETURNS JSONB AS $$
+DECLARE
+  caller_profile public.profiles%ROWTYPE;
+  target_user public.profiles%ROWTYPE;
+  clean_target TEXT;
+BEGIN
+  -- Проверяем права: строго создатель @stasochec или роль owner
+  SELECT * INTO caller_profile
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  IF caller_profile.username IS NULL OR (LOWER(caller_profile.username) != 'stasochec' AND caller_profile.role != 'owner') THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Доступ разрешен исключительно создателю @stasochec');
+  END IF;
+
+  clean_target := LOWER(REGEXP_REPLACE(TRIM(p_target), '^@', ''));
+
+  SELECT * INTO target_user
+  FROM public.profiles
+  WHERE LOWER(username) = clean_target;
+
+  IF target_user.id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Пользователь @' || clean_target || ' не найден');
+  END IF;
+
+  IF LOWER(target_user.username) = 'stasochec' AND p_is_hidden THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Нельзя скрыть аккаунт главного создателя @stasochec');
+  END IF;
+
+  UPDATE public.profiles
+  SET is_hidden = p_is_hidden
+  WHERE id = target_user.id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'user_id', target_user.id,
+    'username', target_user.username,
+    'is_hidden', p_is_hidden
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+GRANT EXECUTE ON FUNCTION public.admin_set_user_hidden(TEXT, BOOLEAN) TO anon, authenticated;
 NOTIFY pgrst, 'reload schema';
 
 -- 7.4 СОЗДАНИЕ ИЛИ ПОЛУЧЕНИЕ DIRECT-ДИАЛОГА (БЕЗ РЕКУРСИИ И С АТОМАРНОСТЬЮ)
@@ -665,12 +720,16 @@ ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
--- Профили: чтение всем авторизованным
+-- Профили: чтение всем авторизованным (с учетом скрытых профилей: видны только себе, Создателю @stasochec и модераторам)
 DROP POLICY IF EXISTS "Profiles readable by authenticated" ON public.profiles;
 CREATE POLICY "Profiles readable by authenticated"
 ON public.profiles FOR SELECT
 TO authenticated
-USING (true);
+USING (
+  NOT is_hidden
+  OR id = auth.uid()
+  OR public.get_my_role() IN ('owner', 'moderator')
+);
 
 -- Профили: пользователь обновляет только свои данные
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
