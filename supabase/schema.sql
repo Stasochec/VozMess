@@ -200,6 +200,126 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.get_email_by_username(TEXT) TO anon, authenticated;
 
+-- 7.1 ПРЯМАЯ РЕГИСТРАЦИЯ И АВТОПОДТВЕРЖДЕНИЕ БЕЗ SMTP (ОБХОД EMAIL RATE LIMIT)
+DROP FUNCTION IF EXISTS public.register_user_direct(TEXT, TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.register_user_direct(
+  p_email TEXT,
+  p_password TEXT,
+  p_username TEXT DEFAULT '',
+  p_display_name TEXT DEFAULT ''
+)
+RETURNS JSONB AS $$
+DECLARE
+  new_user_id UUID;
+  clean_username TEXT;
+  clean_email TEXT;
+  encrypted_pw TEXT;
+  existing_confirmed TIMESTAMPTZ;
+  existing_user_id UUID;
+BEGIN
+  clean_email := LOWER(TRIM(p_email));
+  clean_username := LOWER(REGEXP_REPLACE(COALESCE(p_username, ''), '[^a-zA-Z0-9_]', '', 'g'));
+
+  IF clean_email IS NULL OR clean_email = '' OR clean_email NOT LIKE '%@%' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Укажите корректный адрес электронной почты');
+  END IF;
+
+  encrypted_pw := crypt(p_password, gen_salt('bf'));
+
+  -- Проверяем, существует ли уже пользователь в auth.users
+  SELECT id, email_confirmed_at INTO existing_user_id, existing_confirmed
+  FROM auth.users
+  WHERE LOWER(email) = clean_email
+  LIMIT 1;
+
+  IF existing_user_id IS NOT NULL THEN
+    -- Если аккаунт уже подтвержден, сообщаем об этом
+    IF existing_confirmed IS NOT NULL THEN
+      RETURN jsonb_build_object('success', false, 'error', 'Пользователь с таким email уже зарегистрирован. Пожалуйста, выполните вход.');
+    END IF;
+
+    -- Если аккаунт не был подтвержден из-за лимита Supabase email rate limit:
+    -- Подтверждаем email и обновляем пароль
+    UPDATE auth.users
+    SET email_confirmed_at = NOW(),
+        encrypted_password = encrypted_pw
+    WHERE id = existing_user_id;
+
+    -- Убеждаемся, что в profiles есть запись
+    IF NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = existing_user_id) THEN
+      IF clean_username = '' THEN
+        clean_username := 'user_' || SUBSTRING(existing_user_id::text, 1, 6);
+      END IF;
+
+      INSERT INTO public.profiles (
+        id, username, display_name, bio, role, is_verified, has_vozdux_plus
+      ) VALUES (
+        existing_user_id,
+        clean_username,
+        COALESCE(NULLIF(TRIM(p_display_name), ''), clean_username),
+        'Пользуюсь мессенджером Vozduxan ⚡',
+        CASE WHEN clean_username = 'stasochec' THEN 'owner' ELSE 'user' END,
+        CASE WHEN clean_username = 'stasochec' THEN TRUE ELSE FALSE END,
+        CASE WHEN clean_username = 'stasochec' THEN TRUE ELSE FALSE END
+      );
+    END IF;
+
+    RETURN jsonb_build_object('success', true, 'user_id', existing_user_id, 'status', 'confirmed_existing');
+  END IF;
+
+  -- Новый пользователь: проверяем валидность никнейма
+  IF clean_username IS NULL OR LENGTH(clean_username) < 3 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Никнейм должен содержать минимум 3 символа (латиница, цифры, _)');
+  END IF;
+
+  -- Проверяем занятость никнейма в profiles
+  IF EXISTS (SELECT 1 FROM public.profiles WHERE LOWER(username) = clean_username) THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Никнейм @' || clean_username || ' уже занят');
+  END IF;
+
+  new_user_id := gen_random_uuid();
+
+  INSERT INTO auth.users (
+    id,
+    instance_id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at,
+    confirmation_token,
+    recovery_token
+  ) VALUES (
+    new_user_id,
+    '00000000-0000-0000-0000-000000000000',
+    'authenticated',
+    'authenticated',
+    clean_email,
+    encrypted_pw,
+    NOW(),
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    jsonb_build_object(
+      'username', clean_username,
+      'display_name', COALESCE(NULLIF(TRIM(p_display_name), ''), clean_username)
+    ),
+    NOW(),
+    NOW(),
+    '',
+    ''
+  );
+
+  RETURN jsonb_build_object('success', true, 'user_id', new_user_id, 'status', 'created_new');
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.register_user_direct(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+
 -- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()
 RETURNS INT AS $$

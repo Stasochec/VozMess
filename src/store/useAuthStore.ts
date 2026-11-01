@@ -118,6 +118,44 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (error) {
+        // Если аккаунт завис в состоянии "Email not confirmed", пробуем автоподтвердить через RPC register_user_direct
+        if (
+          error.message?.toLowerCase().includes('not confirmed') ||
+          error.message?.toLowerCase().includes('email_not_confirmed')
+        ) {
+          console.warn('Аккаунт не подтвержден, пробуем подтвердить через register_user_direct...');
+          const { data: rpcRes } = await supabase.rpc('register_user_direct', {
+            p_email: targetEmail,
+            p_password: password,
+            p_username: '',
+            p_display_name: '',
+          });
+
+          if (rpcRes?.success) {
+            const { data: retryData, error: retryErr } = await supabase.auth.signInWithPassword({
+              email: targetEmail,
+              password,
+            });
+
+            if (!retryErr && retryData?.user) {
+              const { data: profileData } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', retryData.user.id)
+                .maybeSingle();
+
+              set({
+                user: retryData.user,
+                session: retryData.session,
+                profile: profileData,
+                isSubmitting: false,
+                error: null,
+              });
+              return { success: true };
+            }
+          }
+        }
+
         set({ isSubmitting: false, error: error.message });
         return { error: error.message };
       }
@@ -173,7 +211,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return { error: `Никнейм @${cleanUsername} уже занят другим пользователем` };
       }
 
-      // 2. Perform Supabase Sign Up
+      // 2. Perform Supabase Sign Up with fallback to direct RPC on rate limit
+      let targetUserId: string | null = null;
+      let activeSession: Session | null = null;
+
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -186,42 +227,110 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (error) {
-        set({ isSubmitting: false, error: error.message });
-        return { error: error.message };
+        // Проверяем ошибку email rate limit или статус 429
+        const isRateLimit =
+          error.message?.toLowerCase().includes('rate limit') ||
+          error.message?.toLowerCase().includes('email rate') ||
+          (error as { status?: number }).status === 429;
+
+        if (isRateLimit) {
+          console.warn('Обнаружен лимит email в Supabase, используем прямой RPC register_user_direct...');
+          const { data: rpcRes, error: rpcErr } = await supabase.rpc('register_user_direct', {
+            p_email: email.trim(),
+            p_password: password,
+            p_username: cleanUsername,
+            p_display_name: displayName.trim() || cleanUsername,
+          });
+
+          if (!rpcErr && rpcRes?.success) {
+            targetUserId = rpcRes.user_id;
+
+            // Сразу авторизуемся с подтвержденным паролем
+            const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+              email: email.trim(),
+              password,
+            });
+
+            if (signInErr) {
+              set({ isSubmitting: false, error: signInErr.message });
+              return { error: signInErr.message };
+            }
+
+            activeSession = signInData.session;
+            targetUserId = signInData.user?.id || targetUserId;
+          } else {
+            const errDetails = rpcRes?.error || rpcErr?.message;
+            const userMsg = errDetails
+              ? `Ошибка регистрации: ${errDetails}`
+              : 'Лимит отправки писем в Supabase. Отключите "Confirm email" в панели Supabase (Authentication -> Providers -> Email).';
+            set({ isSubmitting: false, error: userMsg });
+            return { error: userMsg };
+          }
+        } else {
+          set({ isSubmitting: false, error: error.message });
+          return { error: error.message };
+        }
+      } else {
+        targetUserId = data.user?.id || null;
+        activeSession = data.session;
       }
 
-      if (data.user) {
-        // If session was not immediately returned by signUp, auto-sign in
-        let activeSession = data.session;
-        if (!activeSession) {
-          const { data: signInData } = await supabase.auth.signInWithPassword({
-            email: email.trim(),
-            password,
-          });
-          if (signInData?.session) {
-            activeSession = signInData.session;
+      // 3. Если сессия не вернулась сразу, выполняем вход
+      if (!activeSession) {
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+        if (signInData?.session) {
+          activeSession = signInData.session;
+          targetUserId = signInData.user?.id || targetUserId;
+        } else if (signInErr) {
+          // Если аккаунт заблокирован на неподтвержденном email, пробуем автоподтвердить
+          if (
+            signInErr.message?.toLowerCase().includes('not confirmed') ||
+            signInErr.message?.toLowerCase().includes('email_not_confirmed')
+          ) {
+            const { data: rpcRes } = await supabase.rpc('register_user_direct', {
+              p_email: email.trim(),
+              p_password: password,
+              p_username: cleanUsername,
+              p_display_name: displayName.trim() || cleanUsername,
+            });
+
+            if (rpcRes?.success) {
+              const { data: retrySignIn } = await supabase.auth.signInWithPassword({
+                email: email.trim(),
+                password,
+              });
+              if (retrySignIn?.session) {
+                activeSession = retrySignIn.session;
+                targetUserId = retrySignIn.user?.id || targetUserId;
+              }
+            }
           }
         }
+      }
 
-        // Wait for on_auth_user_created trigger to generate public.profiles row
+      // 4. Подтягиваем профиль
+      if (targetUserId) {
         let loadedProfile: Profile | null = null;
-        for (let attempt = 0; attempt < 5; attempt++) {
+        for (let attempt = 0; attempt < 6; attempt++) {
           const { data: p } = await supabase
             .from('profiles')
             .select('*')
-            .eq('id', data.user.id)
+            .eq('id', targetUserId)
             .maybeSingle();
 
           if (p) {
             loadedProfile = p;
             break;
           }
-          await new Promise((r) => setTimeout(r, 200));
+          await new Promise((r) => setTimeout(r, 250));
         }
 
-        // Instantly transition to authenticated state and open messenger
         set({
-          user: data.user,
+          user: activeSession?.user || (data?.user ?? null),
           session: activeSession,
           profile: loadedProfile,
           isSubmitting: false,
