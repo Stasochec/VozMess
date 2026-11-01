@@ -4,6 +4,7 @@ import { X, User, FileText, Image as ImageIcon, LogOut, Check } from 'lucide-rea
 import { useAuthStore } from '@/store/useAuthStore';
 import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
+import { UsernameInput } from '@/components/ui/UsernameInput';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -13,25 +14,41 @@ interface ProfileModalProps {
 export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const { profile, updateProfile, signOut } = useAuthStore();
 
+  const [username, setUsername] = useState(profile?.username || '');
+  const [isUsernameValid, setIsUsernameValid] = useState(true);
   const [displayName, setDisplayName] = useState(profile?.display_name || '');
   const [bio, setBio] = useState(profile?.bio || '');
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || '');
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   if (!isOpen || !profile) return null;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isUsernameValid) {
+      setSaveError('Пожалуйста, выберите доступный никнейм');
+      return;
+    }
+
     setIsSaving(true);
+    setSaveError(null);
     try {
-      await updateProfile({
-        display_name: displayName.trim(),
+      const cleanNick = username.trim().toLowerCase();
+      const res = await updateProfile({
+        username: cleanNick,
+        display_name: displayName.trim() || cleanNick,
         bio: bio.trim(),
         avatar_url: avatarUrl.trim() || null,
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+
+      if (res.error) {
+        setSaveError(res.error);
+      } else {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -43,7 +60,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-md bg-[#16161C] border border-[#2B2B36] rounded-2xl shadow-2xl overflow-hidden text-zinc-100"
+        className="w-full max-w-md max-h-[92vh] flex flex-col bg-[#16161C] border border-[#2B2B36] rounded-2xl shadow-2xl overflow-hidden text-zinc-100"
       >
         <div className="px-6 py-4 bg-[#1B1B22] border-b border-[#282833] flex items-center justify-between">
           <h3 className="font-bold text-sm text-white">Мой профиль</h3>
@@ -55,9 +72,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+          {/* Profile Card Header Preview */}
           <div className="flex items-center gap-4 p-4 rounded-xl bg-[#1B1B24] border border-[#2B2B38]">
-            <Avatar name={profile.display_name} src={avatarUrl || profile.avatar_url} size="xl" />
+            <Avatar name={displayName || profile.display_name} src={avatarUrl || profile.avatar_url} size="xl" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-extrabold text-white text-base truncate">
@@ -65,14 +83,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 </span>
                 <UserBadges
                   role={profile.role}
-                  username={profile.username}
+                  username={username || profile.username}
                   isVerified={profile.is_verified}
                   hasVozduxPlus={profile.has_vozdux_plus}
                   customTitle={profile.custom_title}
                   showRoleText
                 />
               </div>
-              <span className="text-xs text-[#FF8A1C] font-mono">@{profile.username}</span>
+              <span className="text-xs text-[#FF8A1C] font-mono">
+                @{username || profile.username}
+              </span>
               <p className="text-xs text-zinc-400 mt-1 line-clamp-2">
                 {bio || 'Пользуюсь мессенджером Vozduxan ⚡'}
               </p>
@@ -80,6 +100,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
           </div>
 
           <form onSubmit={handleSave} className="space-y-3.5">
+            {/* Interactive Username field with availability check */}
+            <UsernameInput
+              value={username}
+              onChange={setUsername}
+              currentUsername={profile.username}
+              currentUserId={profile.id}
+              onValidationChange={setIsUsernameValid}
+              label="Уникальный никнейм (@username):"
+            />
+
             <div>
               <label className="block text-xs font-semibold text-zinc-400 mb-1">
                 Отображаемое имя:
@@ -126,14 +156,24 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
               </div>
             </div>
 
+            {saveError && (
+              <p className="text-xs text-rose-400 font-semibold">{saveError}</p>
+            )}
+
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={isSaving}
-                className="w-full py-2.5 bg-[#FF7A00] hover:bg-[#E66E00] text-white font-bold text-xs rounded-xl shadow-md shadow-[#FF7A00]/25 transition-colors flex items-center justify-center gap-1.5"
+                disabled={isSaving || !isUsernameValid}
+                className="w-full py-2.5 bg-[#FF7A00] hover:bg-[#E66E00] disabled:opacity-40 disabled:pointer-events-none text-white font-bold text-xs rounded-xl shadow-md shadow-[#FF7A00]/25 transition-colors flex items-center justify-center gap-1.5"
               >
                 {saved && <Check className="w-4 h-4" />}
-                <span>{isSaving ? 'Сохранение...' : saved ? 'Сохранено!' : 'Сохранить изменения'}</span>
+                <span>
+                  {isSaving
+                    ? 'Сохранение...'
+                    : saved
+                    ? 'Сохранено!'
+                    : 'Сохранить изменения'}
+                </span>
               </button>
             </div>
           </form>

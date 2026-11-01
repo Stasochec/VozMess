@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, AtSign, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { Logo } from '@/components/ui/Logo';
+import { UsernameInput } from '@/components/ui/UsernameInput';
 
 export const AuthScreen: React.FC = () => {
   const { signIn, signUp, isSubmitting, error, clearError } = useAuthStore();
@@ -12,6 +13,7 @@ export const AuthScreen: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
+  const [isUsernameValid, setIsUsernameValid] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [formErr, setFormErr] = useState<string | null>(null);
 
@@ -27,13 +29,19 @@ export const AuthScreen: React.FC = () => {
       }
       await signIn(identifier.trim(), password);
     } else {
+      if (!isUsernameValid) {
+        setFormErr('Пожалуйста, укажите корректный и свободный никнейм (@username)');
+        return;
+      }
       if (!email.trim() || !password.trim() || !username.trim()) {
         setFormErr('Заполните все обязательные поля');
         return;
       }
-      await signUp(email.trim(), password, username.trim(), displayName.trim() || username.trim());
+      await signUp(email.trim(), password, username.trim().toLowerCase(), displayName.trim() || username.trim());
     }
   };
+
+  const isSubmitDisabled = isSubmitting || (mode === 'signup' && !isUsernameValid);
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[#0F0F12] select-none font-sans relative overflow-hidden">
@@ -126,25 +134,14 @@ export const AuthScreen: React.FC = () => {
               </div>
             ) : (
               <>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">
-                    Уникальный никнейм (@username):
-                  </label>
-                  <div className="relative">
-                    <AtSign className="w-4 h-4 text-zinc-500 absolute left-3 top-3 pointer-events-none" />
-                    <input
-                      type="text"
-                      required
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                      placeholder="stasochec"
-                      className="w-full pl-9 pr-3.5 py-2.5 bg-[#1C1C24] border border-[#2E2E3C] rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF7A00] transition-colors"
-                    />
-                  </div>
-                  <span className="text-[10px] text-zinc-500 mt-1 block">
-                    Для создателя укажите никнейм <span className="text-[#FF9500] font-mono">stasochec</span>
-                  </span>
-                </div>
+                {/* Interactive Debounced Username Input with Live Availability Check */}
+                <UsernameInput
+                  value={username}
+                  onChange={setUsername}
+                  onValidationChange={setIsUsernameValid}
+                  label="Уникальный никнейм (@username):"
+                  helperNote="Для создателя укажите никнейм stasochec"
+                />
 
                 <div>
                   <label className="block text-xs font-semibold text-zinc-400 mb-1">
@@ -198,8 +195,8 @@ export const AuthScreen: React.FC = () => {
 
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3 bg-gradient-to-r from-[#FF9500] to-[#FF5500] hover:from-[#E66E00] hover:to-[#E03D00] disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-[#FF7A00]/30 transition-all flex items-center justify-center gap-2 mt-4"
+              disabled={isSubmitDisabled}
+              className="w-full py-3 bg-gradient-to-r from-[#FF9500] to-[#FF5500] hover:from-[#E66E00] hover:to-[#E03D00] disabled:opacity-40 disabled:pointer-events-none text-white font-extrabold text-xs rounded-xl shadow-lg shadow-[#FF7A00]/30 transition-all flex items-center justify-center gap-2 mt-4"
             >
               <span>
                 {isSubmitting
