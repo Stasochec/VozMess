@@ -21,6 +21,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
   const [usernameQuery, setUsernameQuery] = useState('');
   const [groupTitle, setGroupTitle] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [isStartingChat, setIsStartingChat] = useState(false);
   const [foundUser, setFoundUser] = useState<Profile | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -62,20 +63,43 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
   };
 
   const handleStartDirectChat = async () => {
-    if (!foundUser) return;
-    await createDirectChat(foundUser);
-    onClose();
+    if (!foundUser || isStartingChat) return;
+    setIsStartingChat(true);
+    setErrorMsg(null);
+    try {
+      const chatId = await createDirectChat(foundUser);
+      if (chatId) {
+        onClose();
+      } else {
+        setErrorMsg('Не удалось создать диалог. Попробуйте еще раз.');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка при создании чата';
+      setErrorMsg(msg);
+    } finally {
+      setIsStartingChat(false);
+    }
   };
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!groupTitle.trim()) return;
-    await createGroupChat(groupTitle.trim(), []);
-    onClose();
+    try {
+      await createGroupChat(groupTitle.trim(), []);
+      onClose();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Ошибка создания группы';
+      setErrorMsg(msg);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md"
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -160,10 +184,19 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
                     </div>
                   </div>
                   <button
+                    type="button"
                     onClick={handleStartDirectChat}
-                    className="px-3.5 py-1.5 bg-[#FF7A00] hover:bg-[#E66E00] text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                    disabled={isStartingChat}
+                    className="px-3.5 py-1.5 bg-[#FF7A00] hover:bg-[#E66E00] disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
                   >
-                    Написать
+                    {isStartingChat ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Открытие...</span>
+                      </>
+                    ) : (
+                      'Написать'
+                    )}
                   </button>
                 </div>
               )}

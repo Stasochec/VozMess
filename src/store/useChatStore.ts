@@ -268,55 +268,109 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const authStore = useAuthStore.getState();
     const currentUserId = authStore.user?.id;
 
-    if (!isSupabaseConfigured() || !currentUserId) return null;
+    if (!isSupabaseConfigured() || !currentUserId) {
+      throw new Error('Supabase не настроен или пользователь не авторизован');
+    }
 
     try {
-      // 1. Check if direct chat already exists between these two users
-      const { data: existingMemberships } = await supabase
-        .from('chat_members')
-        .select('chat_id')
-        .eq('user_id', currentUserId);
+      let chatId: string | null = null;
 
-      if (existingMemberships && existingMemberships.length > 0) {
-        const chatIds = existingMemberships.map((m) => m.chat_id);
+      // 1. Попытка создания/получения через быстрый атомарный RPC
+      const { data: rpcChatId, error: rpcErr } = await supabase.rpc('create_or_get_direct_chat', {
+        p_target_user_id: targetUser.id,
+      });
 
-        const { data: sharedChat } = await supabase
+      if (!rpcErr && rpcChatId) {
+        chatId = rpcChatId;
+      } else {
+        if (rpcErr) {
+          console.warn('RPC create_or_get_direct_chat error/missing, using client fallback:', rpcErr.message);
+        }
+
+        // 2. Клиентский fallback без рекурсивных джойнов
+        const { data: myMemberships } = await supabase
           .from('chat_members')
-          .select('chat_id, chats!inner(type)')
-          .in('chat_id', chatIds)
-          .eq('user_id', targetUser.id)
-          .eq('chats.type', 'direct')
-          .maybeSingle();
+          .select('chat_id')
+          .eq('user_id', currentUserId);
 
-        if (sharedChat) {
-          set({ activeChatId: sharedChat.chat_id });
-          await get().fetchMessages(sharedChat.chat_id);
-          return sharedChat.chat_id;
+        if (myMemberships && myMemberships.length > 0) {
+          const myChatIds = myMemberships.map((m) => m.chat_id);
+
+          const { data: theirMemberships } = await supabase
+            .from('chat_members')
+            .select('chat_id')
+            .in('chat_id', myChatIds)
+            .eq('user_id', targetUser.id);
+
+          if (theirMemberships && theirMemberships.length > 0) {
+            const candidateIds = theirMemberships.map((m) => m.chat_id);
+            const { data: directChat } = await supabase
+              .from('chats')
+              .select('id')
+              .in('id', candidateIds)
+              .eq('type', 'direct')
+              .limit(1)
+              .maybeSingle();
+
+            if (directChat) {
+              chatId = directChat.id;
+            }
+          }
+        }
+
+        // Если существующий чат не найден, создаем новый
+        if (!chatId) {
+          const { data: newChat, error: chatErr } = await supabase
+            .from('chats')
+            .insert({ type: 'direct', created_by: currentUserId })
+            .select('id')
+            .single();
+
+          if (chatErr) throw chatErr;
+          chatId = newChat.id;
+
+          const { error: membersErr } = await supabase.from('chat_members').insert([
+            { chat_id: chatId, user_id: currentUserId, role: 'owner' },
+            { chat_id: chatId, user_id: targetUser.id, role: 'member' },
+          ]);
+
+          if (membersErr) throw membersErr;
         }
       }
 
-      // 2. Create new direct chat
-      const { data: newChat, error: chatErr } = await supabase
-        .from('chats')
-        .insert({ type: 'direct', created_by: currentUserId })
-        .select()
-        .single();
+      if (!chatId) throw new Error('Не удалось получить ID диалога');
 
-      if (chatErr) throw chatErr;
+      // 3. МГНОВЕННОЕ ОПТИМИСТИЧНОЕ ДОБАВЛЕНИЕ ЧАТА В СТЕЙТ
+      // Это исключает задержки и открывает окно чата сразу
+      const existingInState = get().chats.find((c) => c.id === chatId);
+      const chatObject: Chat = existingInState || {
+        id: chatId,
+        type: 'direct',
+        created_by: currentUserId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        other_user: targetUser,
+        last_message: null,
+        unread_count: 0,
+      };
 
-      // 3. Add both members
-      await supabase.from('chat_members').insert([
-        { chat_id: newChat.id, user_id: currentUserId, role: 'owner' },
-        { chat_id: newChat.id, user_id: targetUser.id, role: 'member' },
-      ]);
+      set((state) => ({
+        activeChatId: chatId,
+        chats: state.chats.some((c) => c.id === chatId)
+          ? state.chats.map((c) => (c.id === chatId ? { ...c, other_user: targetUser } : c))
+          : [chatObject, ...state.chats],
+      }));
 
-      await get().fetchChats();
-      set({ activeChatId: newChat.id });
-      await get().fetchMessages(newChat.id);
-      return newChat.id;
+      // Загружаем сообщения
+      await get().fetchMessages(chatId);
+
+      // Фоново обновляем полный список чатов
+      get().fetchChats().catch(console.error);
+
+      return chatId;
     } catch (err) {
       console.error('Error creating direct chat:', err);
-      return null;
+      throw err;
     }
   },
 
@@ -342,9 +396,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       await supabase.from('chat_members').insert(membersToInsert);
 
-      await get().fetchChats();
-      set({ activeChatId: newChat.id });
+      const groupChatObj: Chat = {
+        id: newChat.id,
+        type: 'group',
+        title: title.trim(),
+        created_by: currentUserId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_message: null,
+        unread_count: 0,
+      };
+
+      set((state) => ({
+        activeChatId: newChat.id,
+        chats: [groupChatObj, ...state.chats],
+      }));
+
       await get().fetchMessages(newChat.id);
+      get().fetchChats().catch(console.error);
       return newChat.id;
     } catch (err) {
       console.error('Error creating group chat:', err);

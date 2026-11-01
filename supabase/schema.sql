@@ -372,6 +372,65 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.admin_confirm_user_email(TEXT) TO anon, authenticated;
 NOTIFY pgrst, 'reload schema';
 
+-- 7.4 СОЗДАНИЕ ИЛИ ПОЛУЧЕНИЕ DIRECT-ДИАЛОГА (БЕЗ РЕКУРСИИ И С АТОМАРНОСТЬЮ)
+DROP FUNCTION IF EXISTS public.create_or_get_direct_chat(UUID);
+CREATE OR REPLACE FUNCTION public.create_or_get_direct_chat(p_target_user_id UUID)
+RETURNS UUID AS $$
+DECLARE
+  v_chat_id UUID;
+  v_current_user_id UUID;
+BEGIN
+  v_current_user_id := auth.uid();
+  IF v_current_user_id IS NULL THEN
+    RAISE EXCEPTION 'Необходима авторизация';
+  END IF;
+
+  IF v_current_user_id = p_target_user_id THEN
+    RAISE EXCEPTION 'Нельзя создать диалог с самим собой';
+  END IF;
+
+  -- 1. Ищем существующий общий личный диалог между двумя пользователями
+  SELECT c.id INTO v_chat_id
+  FROM public.chats c
+  JOIN public.chat_members cm1 ON cm1.chat_id = c.id AND cm1.user_id = v_current_user_id
+  JOIN public.chat_members cm2 ON cm2.chat_id = c.id AND cm2.user_id = p_target_user_id
+  WHERE c.type = 'direct'
+  LIMIT 1;
+
+  IF v_chat_id IS NOT NULL THEN
+    RETURN v_chat_id;
+  END IF;
+
+  -- 2. Создаем новый личный диалог
+  INSERT INTO public.chats (type, created_by)
+  VALUES ('direct', v_current_user_id)
+  RETURNING id INTO v_chat_id;
+
+  -- 3. Добавляем обоих участников
+  INSERT INTO public.chat_members (chat_id, user_id, role)
+  VALUES 
+    (v_chat_id, v_current_user_id, 'owner'),
+    (v_chat_id, p_target_user_id, 'member');
+
+  RETURN v_chat_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.create_or_get_direct_chat(UUID) TO anon, authenticated;
+
+-- Хелпер для RLS без бесконечной рекурсии
+CREATE OR REPLACE FUNCTION public.is_chat_member(p_chat_id UUID, p_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.chat_members
+    WHERE chat_id = p_chat_id AND user_id = p_user_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+GRANT EXECUTE ON FUNCTION public.is_chat_member(UUID, UUID) TO anon, authenticated;
+
 -- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()
 RETURNS INT AS $$
@@ -569,18 +628,13 @@ WITH CHECK (
   )
 );
 
--- Чаты: чтение участникам
+-- Чаты: чтение участникам (через нерекурсивный хелпер)
 DROP POLICY IF EXISTS "Chats visible to participants" ON public.chats;
 CREATE POLICY "Chats visible to participants"
 ON public.chats FOR SELECT
 TO authenticated
 USING (
-  EXISTS (
-    SELECT 1 FROM public.chat_members
-    WHERE chat_members.chat_id = chats.id
-    AND chat_members.user_id = auth.uid()
-  )
-  OR created_by = auth.uid()
+  created_by = auth.uid() OR public.is_chat_member(id, auth.uid())
 );
 
 -- Чаты: создание
@@ -596,25 +650,16 @@ CREATE POLICY "Participants can update chats"
 ON public.chats FOR UPDATE
 TO authenticated
 USING (
-  EXISTS (
-    SELECT 1 FROM public.chat_members
-    WHERE chat_members.chat_id = chats.id
-    AND chat_members.user_id = auth.uid()
-  )
+  created_by = auth.uid() OR public.is_chat_member(id, auth.uid())
 );
 
--- Участники чатов: чтение
+-- Участники чатов: чтение (без рекурсии: пользователь видит себя или соучастников чата)
 DROP POLICY IF EXISTS "Members visible to chat participants" ON public.chat_members;
 CREATE POLICY "Members visible to chat participants"
 ON public.chat_members FOR SELECT
 TO authenticated
 USING (
-  EXISTS (
-    SELECT 1 FROM public.chat_members AS cm
-    WHERE cm.chat_id = chat_members.chat_id
-    AND cm.user_id = auth.uid()
-  )
-  OR user_id = auth.uid()
+  user_id = auth.uid() OR public.is_chat_member(chat_id, auth.uid())
 );
 
 -- Участники чатов: добавление
@@ -637,11 +682,7 @@ CREATE POLICY "Messages readable by chat members"
 ON public.messages FOR SELECT
 TO authenticated
 USING (
-  EXISTS (
-    SELECT 1 FROM public.chat_members
-    WHERE chat_members.chat_id = messages.chat_id
-    AND chat_members.user_id = auth.uid()
-  )
+  public.is_chat_member(chat_id, auth.uid())
 );
 
 -- Сообщения: отправка участникам чата
@@ -650,12 +691,7 @@ CREATE POLICY "Messages insertable by chat members"
 ON public.messages FOR INSERT
 TO authenticated
 WITH CHECK (
-  auth.uid() = sender_id
-  AND EXISTS (
-    SELECT 1 FROM public.chat_members
-    WHERE chat_members.chat_id = messages.chat_id
-    AND chat_members.user_id = auth.uid()
-  )
+  auth.uid() = sender_id AND public.is_chat_member(chat_id, auth.uid())
 );
 
 -- Сообщения: удаление автором, модератором или Богом (@stasochec)

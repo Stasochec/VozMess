@@ -115,7 +115,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
 
   if (!activeChat) {
     return (
-      <div className="flex-1 hidden md:flex flex-col items-center justify-center p-8 bg-zinc-100 dark:bg-[#0F0F12] select-none text-center">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-zinc-100 dark:bg-[#0F0F12] select-none text-center relative">
+        <button
+          onClick={onBack}
+          className="md:hidden absolute top-4 left-4 p-2 rounded-xl bg-zinc-200 dark:bg-[#202028] text-zinc-700 dark:text-zinc-200 transition-colors"
+          title="Вернуться к списку чатов"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
         <div className="p-8 rounded-3xl bg-white/60 dark:bg-[#16161C]/60 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 max-w-sm flex flex-col items-center">
           <Logo size="lg" variant="full" />
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 leading-relaxed">
