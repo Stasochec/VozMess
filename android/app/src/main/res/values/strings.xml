@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VozMess</string>
+    <string name="title_activity_main">VozMess</string>
+    <string name="package_name">com.vozmess.app</string>
+    <string name="custom_url_scheme">com.vozmess.app</string>
+</resources>

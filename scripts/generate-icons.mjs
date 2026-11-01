@@ -128,6 +128,28 @@ async function generate() {
     .png()
     .toFile(path.join(publicDir, 'maskable-icon.png'));
 
+  // Android Native App Icons (mipmap)
+  const androidResDir = path.resolve('android/app/src/main/res');
+  if (fs.existsSync(androidResDir)) {
+    const androidSizes = [
+      { folder: 'mipmap-mdpi', size: 48 },
+      { folder: 'mipmap-hdpi', size: 72 },
+      { folder: 'mipmap-xhdpi', size: 96 },
+      { folder: 'mipmap-xxhdpi', size: 144 },
+      { folder: 'mipmap-xxxhdpi', size: 192 },
+    ];
+
+    for (const { folder, size } of androidSizes) {
+      const targetDir = path.join(androidResDir, folder);
+      if (fs.existsSync(targetDir)) {
+        await sharp(svgBuffer).resize(size, size).png().toFile(path.join(targetDir, 'ic_launcher.png'));
+        await sharp(svgBuffer).resize(size, size).png().toFile(path.join(targetDir, 'ic_launcher_round.png'));
+        await sharp(svgBuffer).resize(size, size).png().toFile(path.join(targetDir, 'ic_launcher_foreground.png'));
+      }
+    }
+    console.log('Android mipmap icons updated successfully!');
+  }
+
   console.log('All icons generated successfully!');
 }
 
