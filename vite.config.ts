@@ -5,7 +5,7 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: './', // Strictly relative paths for GitHub Pages compatibility
+  base: './', // Strictly relative paths for GitHub Pages asset resolution
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -25,16 +25,16 @@ export default defineConfig({
         'maskable-icon.png',
       ],
       manifest: {
-        id: 'vozduxan-app',
+        id: 'https://stasochec.github.io/VozMess/',
+        start_url: 'https://stasochec.github.io/VozMess/',
+        scope: 'https://stasochec.github.io/VozMess/',
         name: 'Vozduxan Web',
         short_name: 'Vozduxan',
-        description: 'Скоростной защищенный веб-мессенджер нового поколения',
+        description: 'Скоростной веб-мессенджер нового поколения',
         theme_color: '#FF7A00',
         background_color: '#0F0F12',
         display: 'standalone',
         orientation: 'portrait',
-        scope: './',
-        start_url: './',
         icons: [
           {
             src: 'pwa-192x192.png',
