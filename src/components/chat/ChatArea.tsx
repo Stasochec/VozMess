@@ -34,6 +34,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 }) => {
   const { chats, activeChatId, messages, sendMessage, deleteMessage, isLoadingMessages } = useChatStore();
   const { user, profile } = useAuthStore();
+  const { sendOnEnter, sendSoundEnabled } = useSettingsStore();
 
   const [inputContent, setInputContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -222,8 +223,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setCompressionInfo(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
-
-  const { sendOnEnter, sendSoundEnabled } = useSettingsStore();
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
