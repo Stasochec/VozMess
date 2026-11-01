@@ -17,13 +17,19 @@ import { Logo } from '@/components/ui/Logo';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { compressImage, CompressResult } from '@/utils/imageCompressor';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { Message } from '@/types';
+import { Message, Chat, Profile } from '@/types';
 
 interface ChatAreaProps {
   onBack: () => void;
+  onOpenUserProfile?: (user: Profile) => void;
+  onOpenGroupProfile?: (chat: Chat) => void;
 }
 
-export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
+export const ChatArea: React.FC<ChatAreaProps> = ({
+  onBack,
+  onOpenUserProfile,
+  onOpenGroupProfile,
+}) => {
   const { chats, activeChatId, messages, sendMessage, deleteMessage, isLoadingMessages } = useChatStore();
   const { user, profile } = useAuthStore();
 
@@ -252,41 +258,53 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <Avatar
-            name={chatTitle}
-            src={chatAvatar}
-            size="md"
-            isOnline={activeChat.type === 'direct' && Boolean(activeChat.other_user)}
-          />
+          <div
+            onClick={() => {
+              if (activeChat.type === 'direct' && activeChat.other_user) {
+                onOpenUserProfile?.(activeChat.other_user);
+              } else {
+                onOpenGroupProfile?.(activeChat);
+              }
+            }}
+            className="flex items-center gap-3 min-w-0 cursor-pointer p-1 -m-1 rounded-xl hover:bg-zinc-100 dark:hover:bg-[#202026] transition-colors"
+            title="Открыть информацию профиля / группы"
+          >
+            <Avatar
+              name={chatTitle}
+              src={chatAvatar}
+              size="md"
+              isOnline={activeChat.type === 'direct' && Boolean(activeChat.other_user)}
+            />
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <h3 className="font-extrabold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 truncate">
-                {chatTitle}
-              </h3>
-              {activeChat.other_user && (
-                <UserBadges
-                  role={activeChat.other_user.role}
-                  username={activeChat.other_user.username}
-                  isVerified={activeChat.other_user.is_verified}
-                  hasVozduxPlus={activeChat.other_user.has_vozdux_plus}
-                  customTitle={activeChat.other_user.custom_title}
-                  showRoleText
-                />
-              )}
-            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h3 className="font-extrabold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 truncate hover:text-[#FF7A00] transition-colors">
+                  {chatTitle}
+                </h3>
+                {activeChat.other_user && (
+                  <UserBadges
+                    role={activeChat.other_user.role}
+                    username={activeChat.other_user.username}
+                    isVerified={activeChat.other_user.is_verified}
+                    hasVozduxPlus={activeChat.other_user.has_vozdux_plus}
+                    customTitle={activeChat.other_user.custom_title}
+                    showRoleText
+                  />
+                )}
+              </div>
 
-            <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-              {activeChat.type === 'direct' ? (
-                <span className="text-emerald-500 font-medium">в сети</span>
-              ) : (
-                <span>чат сообщества</span>
-              )}
-              <span>•</span>
-              <span className="text-[#FF7A00] font-medium flex items-center gap-0.5">
-                <Clock className="w-3 h-3" />
-                <span>Автоудаление 14 дней</span>
-              </span>
+              <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                {activeChat.type === 'direct' ? (
+                  <span className="text-emerald-500 font-medium">в сети</span>
+                ) : (
+                  <span>чат сообщества</span>
+                )}
+                <span>•</span>
+                <span className="text-[#FF7A00] font-medium flex items-center gap-0.5">
+                  <Clock className="w-3 h-3" />
+                  <span>Автоудаление 14 дней</span>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -329,6 +347,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
               currentUserId={user?.id}
               isOwnerOrMod={isOwnerOrMod}
               onDelete={deleteMessage}
+              onOpenUserProfile={onOpenUserProfile}
             />
           ))
         )}

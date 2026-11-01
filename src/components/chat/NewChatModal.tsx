@@ -11,9 +11,10 @@ import { UserBadges } from '@/components/ui/Badges';
 interface NewChatModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenUserProfile?: (user: Profile) => void;
 }
 
-export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) => {
+export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose, onOpenUserProfile }) => {
   const { createDirectChat, createGroupChat } = useChatStore();
   const { profile } = useAuthStore();
 
@@ -166,11 +167,20 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
 
               {foundUser && (
                 <div className="p-3.5 rounded-xl bg-[#1C1C26] border border-[#2D2D3E] flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                  <div
+                    onClick={() => {
+                      if (onOpenUserProfile) {
+                        onClose();
+                        onOpenUserProfile(foundUser);
+                      }
+                    }}
+                    className="flex items-center gap-3 cursor-pointer group"
+                    title="Посмотреть профиль"
+                  >
                     <Avatar name={foundUser.display_name} src={foundUser.avatar_url} size="md" />
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-xs text-white">
+                        <span className="font-bold text-xs text-white group-hover:text-[#FF7A00] transition-colors">
                           {foundUser.display_name}
                         </span>
                         <UserBadges

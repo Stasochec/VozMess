@@ -418,18 +418,24 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.create_or_get_direct_chat(UUID) TO anon, authenticated;
 
+-- Хелпер для получения роли текущего пользователя без RLS рекурсии
+CREATE OR REPLACE FUNCTION public.get_my_role()
+RETURNS TEXT AS $$
+  SELECT role FROM public.profiles WHERE id = auth.uid();
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
+
+GRANT EXECUTE ON FUNCTION public.get_my_role() TO anon, authenticated, service_role;
+
 -- Хелпер для RLS без бесконечной рекурсии
 CREATE OR REPLACE FUNCTION public.is_chat_member(p_chat_id UUID, p_user_id UUID)
 RETURNS BOOLEAN AS $$
-BEGIN
-  RETURN EXISTS (
+  SELECT EXISTS (
     SELECT 1 FROM public.chat_members
     WHERE chat_id = p_chat_id AND user_id = p_user_id
   );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
 
-GRANT EXECUTE ON FUNCTION public.is_chat_member(UUID, UUID) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_chat_member(UUID, UUID) TO anon, authenticated, service_role;
 
 -- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()
@@ -588,23 +594,13 @@ ON public.profiles FOR SELECT
 TO authenticated
 USING (true);
 
--- Профили: пользователь обновляет только свои данные, если не owner
+-- Профили: пользователь обновляет только свои данные
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile"
 ON public.profiles FOR UPDATE
 TO authenticated
 USING (auth.uid() = id)
-WITH CHECK (
-  auth.uid() = id
-  AND (
-    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'owner'
-    OR (
-      role = (SELECT role FROM public.profiles WHERE id = auth.uid())
-      AND has_vozdux_plus = (SELECT has_vozdux_plus FROM public.profiles WHERE id = auth.uid())
-      AND is_verified = (SELECT is_verified FROM public.profiles WHERE id = auth.uid())
-    )
-  )
-);
+WITH CHECK (auth.uid() = id);
 
 -- Профили: Создатель @stasochec («Панель Бога») может обновлять любые профили
 DROP POLICY IF EXISTS "God can update any profile" ON public.profiles;
@@ -612,20 +608,10 @@ CREATE POLICY "God can update any profile"
 ON public.profiles FOR UPDATE
 TO authenticated
 USING (
-  EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid()
-    AND role = 'owner'
-    AND LOWER(username) = 'stasochec'
-  )
+  public.get_my_role() = 'owner'
 )
 WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid()
-    AND role = 'owner'
-    AND LOWER(username) = 'stasochec'
-  )
+  public.get_my_role() = 'owner'
 );
 
 -- Чаты: чтение участникам (через нерекурсивный хелпер)
@@ -701,5 +687,17 @@ ON public.messages FOR DELETE
 TO authenticated
 USING (
   auth.uid() = sender_id
-  OR (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('owner', 'moderator')
+  OR public.get_my_role() IN ('owner', 'moderator')
 );
+
+-- ==============================================================================
+-- 13. ГРАНТЫ ДОСТУПА И ПЕРЕЗАГРУЗКА SCHEMA CACHE POSTGREST
+-- Устраняет ошибку "Database error querying schema"
+-- ==============================================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+NOTIFY pgrst, 'reload config';
+NOTIFY pgrst, 'reload schema';

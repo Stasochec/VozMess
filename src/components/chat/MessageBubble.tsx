@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Check, CheckCheck, Clock, Trash2 } from 'lucide-react';
-import { Message } from '@/types';
+import { Message, Profile } from '@/types';
 import { formatMessageTime, getRemainingTTL } from '@/lib/dateUtils';
 import { UserBadges } from '@/components/ui/Badges';
 
@@ -9,6 +9,7 @@ interface MessageBubbleProps {
   currentUserId?: string;
   isOwnerOrMod?: boolean;
   onDelete?: (id: string) => void;
+  onOpenUserProfile?: (user: Profile) => void;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -16,6 +17,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   currentUserId,
   isOwnerOrMod = false,
   onDelete,
+  onOpenUserProfile,
 }) => {
   const [showDelete, setShowDelete] = useState(false);
 
@@ -77,7 +79,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       >
         {/* Sender info for group chats */}
         {!isOutgoing && message.sender && (
-          <div className="flex items-center gap-1.5 mb-1 text-[11px] font-bold text-[#FF7A00] dark:text-[#FFA033]">
+          <div
+            onClick={() => onOpenUserProfile?.(message.sender!)}
+            className="flex items-center gap-1.5 mb-1 text-[11px] font-bold text-[#FF7A00] dark:text-[#FFA033] cursor-pointer hover:underline"
+            title="Открыть профиль"
+          >
             <span>{message.sender.display_name}</span>
             <UserBadges
               role={message.sender.role}

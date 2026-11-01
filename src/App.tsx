@@ -5,6 +5,8 @@ import { ChatArea } from '@/components/chat/ChatArea';
 import { GodAdminPanel } from '@/components/admin/GodAdminPanel';
 import { ProfileModal } from '@/components/auth/ProfileModal';
 import { NewChatModal } from '@/components/chat/NewChatModal';
+import { UserProfileModal } from '@/components/profile/UserProfileModal';
+import { GroupProfileModal } from '@/components/profile/GroupProfileModal';
 import { AuthScreen } from '@/components/auth/AuthScreen';
 import { ConfigErrorScreen } from '@/components/ui/ConfigErrorScreen';
 import { Logo } from '@/components/ui/Logo';
@@ -13,6 +15,7 @@ import { useChatStore } from '@/store/useChatStore';
 import { useThemeStore } from '@/store/useThemeStore';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { Profile, Chat } from '@/types';
 
 function MessengerScreen() {
   const { init: initAuth, user, isInitialLoading } = useAuthStore();
@@ -23,6 +26,10 @@ function MessengerScreen() {
   const [isGodPanelOpen, setIsGodPanelOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
+
+  // Profile inspection state (Telegram style)
+  const [selectedUserProfile, setSelectedUserProfile] = useState<Profile | null>(null);
+  const [selectedGroupChat, setSelectedGroupChat] = useState<Chat | null>(null);
 
   // Sync theme attribute with documentElement
   useEffect(() => {
@@ -99,7 +106,11 @@ function MessengerScreen() {
             activeChatId ? 'flex w-full' : 'hidden md:flex'
           }`}
         >
-          <ChatArea onBack={() => setActiveChatId(null)} />
+          <ChatArea
+            onBack={() => setActiveChatId(null)}
+            onOpenUserProfile={(user) => setSelectedUserProfile(user)}
+            onOpenGroupProfile={(chat) => setSelectedGroupChat(chat)}
+          />
         </div>
       </div>
 
@@ -111,7 +122,32 @@ function MessengerScreen() {
         <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
       )}
       {isNewChatOpen && (
-        <NewChatModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} />
+        <NewChatModal
+          isOpen={isNewChatOpen}
+          onClose={() => setIsNewChatOpen(false)}
+          onOpenUserProfile={(user) => setSelectedUserProfile(user)}
+        />
+      )}
+
+      {/* Telegram-style User Profile Modal */}
+      {selectedUserProfile && (
+        <UserProfileModal
+          user={selectedUserProfile}
+          isOpen={Boolean(selectedUserProfile)}
+          onClose={() => setSelectedUserProfile(null)}
+        />
+      )}
+
+      {/* Telegram-style Group Profile Modal */}
+      {selectedGroupChat && (
+        <GroupProfileModal
+          chat={selectedGroupChat}
+          isOpen={Boolean(selectedGroupChat)}
+          onClose={() => setSelectedGroupChat(null)}
+          onOpenUserProfile={(user) => {
+            setSelectedUserProfile(user);
+          }}
+        />
       )}
     </div>
   );
