@@ -192,24 +192,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         exit={{ opacity: 0, scale: 0.95 }}
         className="w-full max-w-3xl h-[88vh] max-h-[700px] bg-[#16161C] border border-[#2B2B38] rounded-3xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] overflow-hidden text-zinc-100 flex flex-col md:flex-row"
       >
-        {/* LEFT SIDEBAR NAVIGATION */}
+        {/* LEFT SIDEBAR NAVIGATION (RESPONSIVE: TABS PILL-BAR ON MOBILE, FULL SIDEBAR ON DESKTOP) */}
         <aside className="w-full md:w-64 bg-[#141419] border-b md:border-b-0 md:border-r border-[#262633] flex flex-col flex-shrink-0">
           {/* Header */}
-          <div className="p-4 border-b border-[#262633] flex items-center justify-between">
+          <div className="p-3 sm:p-4 border-b border-[#262633] flex items-center justify-between">
             <h3 className="font-extrabold text-sm text-white flex items-center gap-2">
               <span className="text-[#FF7A00]">⚙️</span>
               <span>Настройки</span>
             </h3>
             <button
               onClick={onClose}
-              className="md:hidden p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+              className="md:hidden p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 active:scale-95 transition-all"
+              title="Закрыть"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 
-          {/* User Mini Card in Settings Sidebar */}
-          <div className="p-4 bg-gradient-to-br from-[#24150B]/60 to-[#141419] border-b border-[#262633] flex items-center gap-3">
+          {/* User Mini Card (Desktop only to save vertical space on mobile) */}
+          <div className="hidden md:flex p-4 bg-gradient-to-br from-[#24150B]/60 to-[#141419] border-b border-[#262633] items-center gap-3">
             <Avatar name={profile.display_name} src={profile.avatar_url} size="md" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1">
@@ -225,8 +226,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Navigation Items */}
-          <div className="flex-1 p-2 space-y-1 overflow-y-auto">
+          {/* Navigation Items: Horizontal scroll on mobile, vertical stack on desktop */}
+          <div className="flex md:flex-col overflow-x-auto md:overflow-y-auto p-2 gap-1.5 md:gap-1 flex-shrink-0 no-scrollbar">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -234,24 +235,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                  className={`flex-shrink-0 flex items-center justify-between px-3.5 py-2 md:py-2.5 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${
                     isActive
                       ? 'bg-[#FF7A00] text-white shadow-md shadow-[#FF7A00]/25'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 bg-[#1C1C24] md:bg-transparent'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2">
                     <Icon className={`w-4 h-4 ${isActive ? 'text-white' : item.color}`} />
                     <span>{item.label}</span>
                   </div>
-                  <ChevronRight className={`w-3.5 h-3.5 opacity-60 ${isActive ? 'text-white' : ''}`} />
+                  <ChevronRight className={`w-3.5 h-3.5 opacity-60 hidden md:block ${isActive ? 'text-white' : ''}`} />
                 </button>
               );
             })}
           </div>
 
-          {/* Bottom Sign Out */}
-          <div className="p-3 border-t border-[#262633]">
+          {/* Bottom Sign Out (Desktop) */}
+          <div className="hidden md:block p-3 border-t border-[#262633]">
             <button
               onClick={() => {
                 if (window.confirm('Вы действительно хотите выйти из аккаунта?')) {
@@ -269,14 +270,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* RIGHT CONTENT PANE */}
         <main className="flex-1 flex flex-col min-w-0 bg-[#16161C] overflow-hidden">
-          {/* Top Title Bar */}
-          <header className="px-6 py-4 border-b border-[#262633] flex items-center justify-between bg-[#191921]/60">
+          {/* Top Title Bar (Desktop only, mobile already has pill bar) */}
+          <header className="hidden md:flex px-6 py-4 border-b border-[#262633] items-center justify-between bg-[#191921]/60">
             <h4 className="font-extrabold text-sm text-white">
               {navItems.find((n) => n.id === activeTab)?.label}
             </h4>
             <button
               onClick={onClose}
-              className="hidden md:flex p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
               title="Закрыть"
             >
               <X className="w-4 h-4" />
@@ -388,6 +389,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </>
                   )}
                 </button>
+
+                {/* Mobile-only Sign Out Button */}
+                <div className="md:hidden pt-4 border-t border-[#262633]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Вы действительно хотите выйти из аккаунта?')) {
+                        signOut();
+                        onClose();
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Выйти из аккаунта</span>
+                  </button>
+                </div>
               </form>
             )}
 

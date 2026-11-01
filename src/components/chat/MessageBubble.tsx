@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, CheckCheck, Clock, Trash2 } from 'lucide-react';
+import { Check, CheckCheck, Clock, Trash2, ZoomIn, FileText } from 'lucide-react';
 import { Message, Profile } from '@/types';
 import { formatMessageTime, getRemainingTTL } from '@/lib/dateUtils';
 import { UserBadges } from '@/components/ui/Badges';
@@ -11,6 +11,13 @@ interface MessageBubbleProps {
   isOwnerOrMod?: boolean;
   onDelete?: (id: string) => void;
   onOpenUserProfile?: (user: Profile) => void;
+  onOpenMedia?: (
+    mediaUrl: string,
+    mediaType?: string | null,
+    caption?: string | null,
+    senderName?: string,
+    createdAt?: string
+  ) => void;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -19,6 +26,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   isOwnerOrMod = false,
   onDelete,
   onOpenUserProfile,
+  onOpenMedia,
 }) => {
   const [showDelete, setShowDelete] = useState(false);
   const { fontSize } = useSettingsStore();
@@ -105,13 +113,42 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         {/* Media attachment */}
         {message.media_url && (
-          <div className="mb-2 rounded-xl overflow-hidden max-h-72">
-            <img
-              src={message.media_url}
-              alt="Вложение"
-              className="w-full h-full object-cover rounded-xl"
-              loading="lazy"
-            />
+          <div
+            onClick={() =>
+              onOpenMedia?.(
+                message.media_url!,
+                message.media_type,
+                message.content,
+                message.sender?.display_name,
+                message.created_at
+              )
+            }
+            className="mb-2 rounded-xl overflow-hidden cursor-pointer relative group/img bg-black/5 dark:bg-black/25 max-w-full"
+            title="Нажмите, чтобы открыть фото на весь экран"
+          >
+            {message.media_type === 'file' ? (
+              <div className="p-3 flex items-center gap-2.5 bg-black/10 dark:bg-black/30 rounded-xl hover:bg-black/20 transition-colors">
+                <FileText className="w-6 h-6 text-[#FF7A00]" />
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold block truncate">Файл во вложении</span>
+                  <span className="text-[10px] text-zinc-400">Нажмите для просмотра</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <img
+                  src={message.media_url}
+                  alt="Вложение"
+                  className="w-full max-h-80 sm:max-h-96 object-contain rounded-xl transition-transform duration-200 group-hover/img:scale-[1.01]"
+                  loading="lazy"
+                />
+                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity rounded-xl flex items-center justify-center pointer-events-none">
+                  <div className="p-2 rounded-full bg-black/60 text-white shadow-lg">
+                    <ZoomIn className="w-5 h-5" />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 

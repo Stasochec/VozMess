@@ -7,12 +7,16 @@ import {
   Clock,
   X,
   FileImage,
+  UploadCloud,
+  AlertCircle,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
 import { MessageBubble } from './MessageBubble';
+import { MediaViewerModal } from './MediaViewerModal';
 import { Logo } from '@/components/ui/Logo';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { compressImage, CompressResult } from '@/utils/imageCompressor';
@@ -32,7 +36,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onOpenUserProfile,
   onOpenGroupProfile,
 }) => {
-  const { chats, activeChatId, messages, sendMessage, deleteMessage, isLoadingMessages } = useChatStore();
+  const { chats, activeChatId, messages, sendMessage, deleteMessage, isLoadingMessages } =
+    useChatStore();
   const { user, profile } = useAuthStore();
   const { sendOnEnter, sendSoundEnabled } = useSettingsStore();
 
@@ -41,22 +46,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [uploadErrorMsg, setUploadErrorMsg] = useState<string | null>(null);
   const [compressionInfo, setCompressionInfo] = useState<{
     originalKb: number;
     compressedKb: number;
     reduction: number;
   } | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  // Lightbox Media Viewer State
+  const [viewingMedia, setViewingMedia] = useState<{
+    url: string;
+    type?: string | null;
+    caption?: string | null;
+    senderName?: string;
+    createdAt?: string;
+  } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
 
   // 1. REALTIME SUBSCRIPTION PER ACTIVE CHAT WITH CLEANUP
   useEffect(() => {
-    // Перед подпиской на новый чат отписываемся от предыдущего канала:
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
       channelRef.current = null;
@@ -141,24 +157,190 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     };
   }, [activeChatId]);
 
+  // Smooth scroll to bottom on new messages or input change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Process and compress chosen file (from input, paste, or drag & drop)
+  const processSelectedFile = async (file: File) => {
+    setUploadErrorMsg(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    if (file.type.startsWith('image/')) {
+      setIsCompressing(true);
+      try {
+        const res: CompressResult = await compressImage(file, 1280, 0.8);
+        setSelectedFile(res.file);
+        setPreviewUrl(res.previewUrl);
+        setCompressionInfo({
+          originalKb: Math.round(res.originalSize / 1024),
+          compressedKb: Math.round(res.compressedSize / 1024),
+          reduction: res.reductionPercentage,
+        });
+      } finally {
+        setIsCompressing(false);
+      }
+    } else {
+      setSelectedFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setCompressionInfo(null);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processSelectedFile(file);
+    }
+  };
+
+  const handleClearAttachment = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setCompressionInfo(null);
+    setUploadErrorMsg(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Clipboard Paste support (Ctrl+V / Mobile Paste)
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (file) {
+          e.preventDefault();
+          processSelectedFile(file);
+          break;
+        }
+      }
+    }
+  };
+
+  // Drag and Drop support
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      processSelectedFile(file);
+    }
+  };
+
+  // Textarea auto-resize
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputContent(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  };
+
+  const handleSend = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if ((!inputContent.trim() && !selectedFile) || !activeChat) return;
+
+    let mediaUrl: string | undefined = undefined;
+    let mediaType: string | undefined = undefined;
+
+    if (selectedFile && user && isSupabaseConfigured()) {
+      setIsUploading(true);
+      setUploadErrorMsg(null);
+
+      try {
+        const fileExt = selectedFile.name.split('.').pop() || 'webp';
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = `${user.id}/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('chat-media')
+          .upload(filePath, selectedFile, {
+            contentType: selectedFile.type,
+            upsert: true,
+          });
+
+        if (uploadError) {
+          console.error('Storage upload error:', uploadError.message);
+          setUploadErrorMsg(
+            `Ошибка отправки фото: ${uploadError.message}. Убедитесь, что в Supabase создан бакет 'chat-media'.`
+          );
+          setIsUploading(false);
+          return; // Do not send empty phantom message
+        }
+
+        const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
+        mediaUrl = data.publicUrl;
+        mediaType = selectedFile.type.startsWith('image/') ? 'image' : 'file';
+      } catch (err: unknown) {
+        console.error('Media upload error:', err);
+        const msg = err instanceof Error ? err.message : 'Ошибка отправки файла';
+        setUploadErrorMsg(`Ошибка отправки: ${msg}`);
+        setIsUploading(false);
+        return;
+      } finally {
+        setIsUploading(false);
+      }
+    }
+
+    if (sendSoundEnabled) {
+      soundEffects.playSent();
+    }
+
+    await sendMessage(activeChat.id, inputContent, mediaUrl, mediaType);
+    setInputContent('');
+    handleClearAttachment();
+
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (sendOnEnter) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    } else {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleSend();
+      }
+    }
+  };
+
+  // 2. EMPTY STATE WHEN NO CHAT IS SELECTED
   if (!activeChat) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-zinc-100 dark:bg-[#0F0F12] select-none text-center relative">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-zinc-100 dark:bg-[#0F0F12] select-none text-center relative">
         <button
           onClick={onBack}
-          className="md:hidden absolute top-4 left-4 p-2 rounded-xl bg-zinc-200 dark:bg-[#202028] text-zinc-700 dark:text-zinc-200 transition-colors"
+          className="md:hidden absolute top-4 left-4 p-2.5 rounded-2xl bg-zinc-200 dark:bg-[#202028] text-zinc-700 dark:text-zinc-200 transition-colors"
           title="Вернуться к списку чатов"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div className="p-8 rounded-3xl bg-white/60 dark:bg-[#16161C]/60 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 max-w-sm flex flex-col items-center">
+        <div className="p-8 rounded-3xl bg-white/70 dark:bg-[#16161C]/70 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 max-w-sm flex flex-col items-center shadow-lg">
           <Logo size="lg" variant="full" />
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 leading-relaxed">
-            Выберите диалог в левой колонке или начните новый. Все сообщения защищены и автоматически удаляются через 14 дней.
+            Выберите диалог в списке слева или начните новый. Все сообщения защищены и автоматически
+            удаляются через 14 дней.
           </p>
           <div className="mt-4 px-3 py-1 rounded-full bg-orange-500/10 text-[#FF7A00] text-[11px] font-semibold border border-orange-500/20">
             ⚡ Vozduxan Protocol • TTL 14 Days
@@ -183,128 +365,53 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     profile?.role === 'moderator' ||
     profile?.username?.toLowerCase() === 'stasochec';
 
-  // 2. CLIENT-SIDE COMPRESSION HOOKUP
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-
-    if (file.type.startsWith('image/')) {
-      setIsCompressing(true);
-      try {
-        // Compress down to 1280px max dimension, webp quality 0.8
-        const res: CompressResult = await compressImage(file, 1280, 0.8);
-        setSelectedFile(res.file);
-        setPreviewUrl(res.previewUrl);
-        setCompressionInfo({
-          originalKb: Math.round(res.originalSize / 1024),
-          compressedKb: Math.round(res.compressedSize / 1024),
-          reduction: res.reductionPercentage,
-        });
-      } finally {
-        setIsCompressing(false);
-      }
-    } else {
-      setSelectedFile(file);
-      setPreviewUrl(URL.createObjectURL(file));
-      setCompressionInfo(null);
-    }
-  };
-
-  const handleClearAttachment = () => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    setCompressionInfo(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleSend = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputContent.trim() && !selectedFile) return;
-
-    if (sendSoundEnabled) {
-      soundEffects.playSent();
-    }
-
-    let mediaUrl: string | undefined = undefined;
-    let mediaType: string | undefined = undefined;
-
-    if (selectedFile && user && isSupabaseConfigured()) {
-      setIsUploading(true);
-      try {
-        const fileExt = selectedFile.name.split('.').pop() || 'webp';
-        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `${user.id}/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('chat-media')
-          .upload(filePath, selectedFile, {
-            contentType: selectedFile.type,
-          });
-
-        if (!uploadError) {
-          const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
-          mediaUrl = data.publicUrl;
-          mediaType = selectedFile.type.startsWith('image/') ? 'image' : 'file';
-        } else {
-          console.error('Storage upload error:', uploadError.message);
-        }
-      } catch (err) {
-        console.error('Media upload error:', err);
-      } finally {
-        setIsUploading(false);
-      }
-    }
-
-    await sendMessage(activeChat.id, inputContent, mediaUrl, mediaType);
-    setInputContent('');
-    handleClearAttachment();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (sendOnEnter) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    } else {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        handleSend();
-      }
-    }
-  };
-
   const sampleEmojis = ['🔥', '⚡', '👑', '🛡️', '🚀', '🧡', '👍', '👌', '😎', '🎉', '💨', '✨'];
 
   return (
-    <main className="flex-1 flex flex-col h-full bg-[#F4F4F5] dark:bg-[#0F0F12] overflow-hidden relative">
-      {/* 1. CHAT HEADER */}
-      <header className="h-14 sm:h-16 px-3.5 sm:px-5 flex items-center justify-between bg-white dark:bg-[#18181C] border-b border-[#E4E4E7] dark:border-[#26262F] z-10 select-none shadow-xs">
-        <div className="flex items-center gap-3 min-w-0">
+    <main
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="flex-1 flex flex-col h-full bg-[#F4F4F5] dark:bg-[#0F0F12] overflow-hidden relative"
+    >
+      {/* DRAG & DROP OVERLAY */}
+      {isDraggingOver && (
+        <div className="absolute inset-0 z-40 bg-[#FF7A00]/20 backdrop-blur-xs border-3 border-dashed border-[#FF7A00] flex flex-col items-center justify-center p-6 text-center select-none pointer-events-none">
+          <div className="w-16 h-16 rounded-3xl bg-[#FF7A00] text-white flex items-center justify-center shadow-xl animate-bounce mb-3">
+            <UploadCloud className="w-8 h-8" />
+          </div>
+          <h3 className="font-extrabold text-base text-white drop-shadow">
+            Отпустите фото для быстрой отправки
+          </h3>
+          <p className="text-xs text-zinc-200 mt-1">
+            Изображение будет оптимизировано в WebP перед передачей
+          </p>
+        </div>
+      )}
+
+      {/* 1. CHAT HEADER (MOBILE ADAPTED) */}
+      <header className="h-14 sm:h-16 px-3 sm:px-5 flex items-center justify-between bg-white dark:bg-[#18181C] border-b border-[#E4E4E7] dark:border-[#26262F] z-10 select-none shadow-xs">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+          {/* Mobile Back Button (Touch target min 42px) */}
           <button
             onClick={onBack}
-            className="md:hidden p-1.5 -ml-1 rounded-xl text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-[#25252E] transition-colors"
+            className="md:hidden w-10 h-10 -ml-1 flex items-center justify-center rounded-xl text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#25252E] active:scale-95 transition-all"
+            title="Назад к чатам"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
+          {/* Clickable Header Info (Opens Profile or Group Modal) */}
           <div
             onClick={() => {
               if (activeChat.type === 'direct' && activeChat.other_user) {
                 onOpenUserProfile?.(activeChat.other_user);
-              } else {
+              } else if (activeChat.type === 'group' || activeChat.type === 'channel') {
                 onOpenGroupProfile?.(activeChat);
               }
             }}
-            className="flex items-center gap-3 min-w-0 cursor-pointer p-1 -m-1 rounded-xl hover:bg-zinc-100 dark:hover:bg-[#202026] transition-colors"
-            title="Открыть информацию профиля / группы"
+            className="flex items-center gap-2.5 sm:gap-3 min-w-0 cursor-pointer p-1 rounded-xl hover:bg-zinc-100 dark:hover:bg-white/5 transition-colors flex-1"
+            title="Открыть информацию"
           >
             <Avatar
               name={chatTitle}
@@ -312,13 +419,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               size="md"
               isOnline={activeChat.type === 'direct' && Boolean(activeChat.other_user)}
             />
-
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <h3 className="font-extrabold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 truncate hover:text-[#FF7A00] transition-colors">
+                <h3 className="font-bold text-xs sm:text-sm text-zinc-900 dark:text-zinc-100 truncate">
                   {chatTitle}
                 </h3>
-                {activeChat.other_user && (
+                {activeChat.type === 'direct' && activeChat.other_user && (
                   <UserBadges
                     role={activeChat.other_user.role}
                     username={activeChat.other_user.username}
@@ -326,55 +432,40 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     hasVozduxPlus={activeChat.other_user.has_vozdux_plus}
                     isHidden={activeChat.other_user.is_hidden}
                     customTitle={activeChat.other_user.custom_title}
-                    showRoleText
                   />
                 )}
               </div>
-
-              <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-                {activeChat.type === 'direct' ? (
-                  <span className="text-emerald-500 font-medium">в сети</span>
-                ) : (
-                  <span>чат сообщества</span>
-                )}
-                <span>•</span>
-                <span className="text-[#FF7A00] font-medium flex items-center gap-0.5">
-                  <Clock className="w-3 h-3" />
-                  <span>Автоудаление 14 дней</span>
-                </span>
-              </div>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                {activeChat.type === 'direct'
+                  ? `@${activeChat.other_user?.username || 'user'}`
+                  : `${activeChat.members?.length || 1} участников • нажми для настроек ⚙️`}
+              </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
-          <div
-            title="Все сообщения автоматически удаляются ровно через 14 дней"
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-500/10 text-[#FF7A00] border border-orange-500/20"
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>Vozdux TTL: 14d</span>
-          </div>
+        {/* TTL 14 Days Indicator */}
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-500/10 text-[#FF7A00] text-xs font-mono font-bold border border-orange-500/20">
+          <Clock className="w-3.5 h-3.5" />
+          <span>TTL 14 Дней</span>
         </div>
       </header>
 
       {/* 2. MESSAGES STREAM */}
-      <div className="flex-1 overflow-y-auto py-3 px-1 sm:px-2 flex flex-col space-y-1">
+      <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-1 sm:space-y-2 overscroll-contain">
         {isLoadingMessages ? (
-          <div className="flex-1 flex items-center justify-center text-xs text-zinc-400 gap-2">
-            <span className="w-4 h-4 border-2 border-[#FF7A00] border-t-transparent rounded-full animate-spin" />
-            <span>Загрузка сообщений...</span>
+          <div className="h-full flex items-center justify-center text-xs text-zinc-400">
+            <span className="w-5 h-5 border-2 border-[#FF7A00] border-t-transparent rounded-full animate-spin mr-2" />
+            Загрузка сообщений...
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center select-none">
-            <div className="w-16 h-16 rounded-2xl bg-orange-500/10 flex items-center justify-center text-[#FF7A00] mb-3">
-              <Clock className="w-8 h-8" />
+          <div className="h-full flex flex-col items-center justify-center text-zinc-400 text-xs text-center p-6 select-none">
+            <div className="w-12 h-12 rounded-2xl bg-orange-500/10 text-[#FF7A00] flex items-center justify-center mb-3">
+              ⚡
             </div>
-            <h4 className="font-bold text-sm text-zinc-800 dark:text-zinc-200">
-              Здесь пока нет сообщений
-            </h4>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-xs">
-              Отправьте первое сообщение! Оно будет сохранено на 14 дней и автоматически удалится.
+            <p className="font-semibold text-zinc-300">Сообщений пока нет</p>
+            <p className="text-[11px] text-zinc-500 mt-1 max-w-xs">
+              Отправьте первое сообщение или прикрепите фото. Сообщения удаляются ровно через 14 дней.
             </p>
           </div>
         ) : (
@@ -386,35 +477,54 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               isOwnerOrMod={isOwnerOrMod}
               onDelete={deleteMessage}
               onOpenUserProfile={onOpenUserProfile}
+              onOpenMedia={(url, type, caption, senderName, createdAt) =>
+                setViewingMedia({ url, type, caption, senderName, createdAt })
+              }
             />
           ))
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 3. ATTACHMENT PREVIEW */}
+      {/* 3. ATTACHMENT UPLOAD ERROR BANNER */}
+      {uploadErrorMsg && (
+        <div className="px-4 py-2.5 bg-rose-500/15 border-t border-rose-500/30 flex items-center justify-between text-xs text-rose-300">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{uploadErrorMsg}</span>
+          </div>
+          <button
+            onClick={() => setUploadErrorMsg(null)}
+            className="p-1 rounded text-rose-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 4. ATTACHMENT PREVIEW DRAWER */}
       {(previewUrl || isCompressing) && (
-        <div className="px-4 py-2.5 bg-white/95 dark:bg-[#18181C]/95 border-t border-[#E4E4E7] dark:border-[#26262F] flex items-center justify-between backdrop-blur-xs">
+        <div className="px-3 sm:px-4 py-2.5 bg-white/95 dark:bg-[#18181C]/95 border-t border-[#E4E4E7] dark:border-[#26262F] flex items-center justify-between backdrop-blur-xs">
           {isCompressing ? (
             <div className="flex items-center gap-2.5 text-xs text-orange-500 font-semibold py-1">
               <span className="w-4 h-4 border-2 border-[#FF7A00] border-t-transparent rounded-full animate-spin" />
-              <span>Оптимизация изображения через HTML Canvas (до 1280px WebP)...</span>
+              <span>Сжатие через Canvas WebP (до 1280px)...</span>
             </div>
           ) : (
             <div className="flex items-center gap-3 min-w-0">
               <img
                 src={previewUrl!}
                 alt="Preview"
-                className="w-12 h-12 object-cover rounded-xl border border-orange-400 shadow-xs"
+                className="w-12 h-12 object-cover rounded-xl border border-orange-400 shadow-xs flex-shrink-0"
               />
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 block truncate">
-                  {selectedFile?.name || 'Изображение готово к отправке'}
+                  {selectedFile?.name || 'Фото готово к отправке'}
                 </span>
                 {compressionInfo && (
-                  <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                      ⚡ Сжато: {compressionInfo.compressedKb} КБ (-{compressionInfo.reduction}%)
+                      ⚡ {compressionInfo.compressedKb} КБ (-{compressionInfo.reduction}%)
                     </span>
                     <span className="text-[10px] text-zinc-400">
                       было {compressionInfo.originalKb} КБ
@@ -426,7 +536,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
           <button
             onClick={handleClearAttachment}
-            className="p-1 rounded-full text-zinc-400 hover:text-rose-500 transition-colors ml-2"
+            className="p-1.5 rounded-full text-zinc-400 hover:text-rose-500 transition-colors ml-2"
             title="Отменить вложение"
           >
             <X className="w-4 h-4" />
@@ -434,9 +544,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* 4. EMOJI PICKER POPUP */}
+      {/* 5. EMOJI PICKER POPUP (MOBILE ADAPTED) */}
       {showEmojiPicker && (
-        <div className="absolute bottom-16 right-4 sm:right-20 p-3 bg-white dark:bg-[#1E1E26] border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-xl z-30 flex gap-2 flex-wrap max-w-xs">
+        <div className="absolute bottom-16 left-3 right-3 sm:left-auto sm:right-20 p-3 bg-white dark:bg-[#1E1E26] border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl z-30 flex gap-2.5 flex-wrap justify-center sm:justify-start max-w-xs mx-auto">
           {sampleEmojis.map((emoji) => (
             <button
               key={emoji}
@@ -444,7 +554,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 setInputContent((prev) => prev + emoji);
                 setShowEmojiPicker(false);
               }}
-              className="text-lg hover:scale-125 transition-transform p-1 cursor-pointer"
+              className="text-xl hover:scale-125 active:scale-95 transition-transform p-1 cursor-pointer"
             >
               {emoji}
             </button>
@@ -452,9 +562,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* 5. BOTTOM INPUT BAR */}
-      <footer className="p-2 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F]">
-        <div className="max-w-4xl mx-auto flex items-end gap-2">
+      {/* 6. BOTTOM INPUT BAR (MOBILE VIRTUAL KEYBOARD OPTIMIZED) */}
+      <footer className="p-2 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F] pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
+        <div className="max-w-4xl mx-auto flex items-end gap-1.5 sm:gap-2">
+          {/* File input (Camera or Gallery) */}
           <input
             type="file"
             ref={fileInputRef}
@@ -465,41 +576,67 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="p-2.5 rounded-xl text-zinc-500 dark:text-zinc-400 hover:text-[#FF7A00] hover:bg-zinc-100 dark:hover:bg-[#25252E] transition-colors flex-shrink-0"
-            title="Прикрепить изображение"
+            className="w-10 h-10 rounded-xl text-zinc-500 dark:text-zinc-400 hover:text-[#FF7A00] hover:bg-zinc-100 dark:hover:bg-[#25252E] active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
+            title="Прикрепить изображение (или вставьте Ctrl+V)"
           >
             <Paperclip className="w-5 h-5" />
           </button>
 
-          <div className="flex-1 relative flex items-center bg-zinc-100 dark:bg-[#22222B] rounded-2xl border border-transparent focus-within:border-[#FF7A00] dark:focus-within:border-[#FF7A00] transition-all px-3.5 py-1.5">
+          {/* Text input with Paste support and Auto-resize */}
+          <div className="flex-1 relative flex items-center bg-zinc-100 dark:bg-[#22222B] rounded-2xl border border-transparent focus-within:border-[#FF7A00] dark:focus-within:border-[#FF7A00] transition-all px-3 py-1">
             <textarea
+              ref={textareaRef}
               rows={1}
               value={inputContent}
-              onChange={(e) => setInputContent(e.target.value)}
+              onChange={handleTextareaChange}
+              onPaste={handlePaste}
               onKeyDown={handleKeyDown}
-              placeholder="Написать сообщение... (Enter для отправки)"
-              className="w-full bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none resize-none max-h-32 min-h-[24px] py-1 leading-relaxed"
+              placeholder={
+                selectedFile
+                  ? 'Добавьте подпись к фото...'
+                  : 'Написать сообщение... (Enter для отправки)'
+              }
+              className="w-full bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none resize-none max-h-28 min-h-[26px] py-1 leading-relaxed"
             />
 
             <button
               type="button"
               onClick={() => setShowEmojiPicker((prev) => !prev)}
-              className="p-1.5 text-zinc-400 hover:text-[#FF7A00] transition-colors"
+              className="p-1.5 text-zinc-400 hover:text-[#FF7A00] transition-colors ml-1"
+              title="Эмодзи"
             >
               <Smile className="w-5 h-5" />
             </button>
           </div>
 
+          {/* Send button with Uploading spinner */}
           <button
             onClick={() => handleSend()}
-            disabled={(!inputContent.trim() && !selectedFile) || isUploading}
+            disabled={(!inputContent.trim() && !selectedFile) || isUploading || isCompressing}
             className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF9500] to-[#FF5500] hover:from-[#E66E00] hover:to-[#E03D00] disabled:opacity-40 disabled:pointer-events-none text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-[#FF7A00]/30 transition-transform active:scale-95"
             title="Отправить (Enter)"
           >
-            <Send className="w-4.5 h-4.5 ml-0.5" />
+            {isUploading ? (
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Send className="w-4.5 h-4.5 ml-0.5" />
+            )}
           </button>
         </div>
       </footer>
+
+      {/* FULLSCREEN LIGHTBOX MEDIA VIEWER */}
+      {viewingMedia && (
+        <MediaViewerModal
+          isOpen={Boolean(viewingMedia)}
+          mediaUrl={viewingMedia.url}
+          mediaType={viewingMedia.type}
+          caption={viewingMedia.caption}
+          senderName={viewingMedia.senderName}
+          createdAt={viewingMedia.createdAt}
+          onClose={() => setViewingMedia(null)}
+        />
+      )}
     </main>
   );
 };
