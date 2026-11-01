@@ -44,8 +44,10 @@ export interface Chat {
   id: string;
   type: ChatType;
   title?: string | null;
+  description?: string | null;
   avatar_url?: string | null;
   created_by?: string | null;
+  is_private?: boolean;
   created_at: string;
   updated_at: string;
   last_message?: Message | null;

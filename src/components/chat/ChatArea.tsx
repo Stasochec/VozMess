@@ -18,6 +18,8 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { compressImage, CompressResult } from '@/utils/imageCompressor';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { Message, Chat, Profile } from '@/types';
+import { useSettingsStore } from '@/store/useSettingsStore';
+import { soundEffects } from '@/lib/soundUtils';
 
 interface ChatAreaProps {
   onBack: () => void;
@@ -89,6 +91,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           };
 
           useChatStore.getState().addRealtimeMessage(populatedMsg);
+
+          // Incoming sound and desktop notification for other senders
+          if (newMsg.sender_id !== user?.id) {
+            const settings = useSettingsStore.getState();
+            if (settings.soundEnabled) {
+              soundEffects.playIncoming();
+            }
+            if (
+              settings.desktopNotifications &&
+              document.hidden &&
+              'Notification' in window &&
+              Notification.permission === 'granted'
+            ) {
+              try {
+                new Notification(senderProfile?.display_name || 'Vozduxan', {
+                  body: newMsg.content || 'Новое вложение',
+                  icon: senderProfile?.avatar_url || undefined,
+                });
+              } catch {
+                // Ignore notification error
+              }
+            }
+          }
         }
       )
       .on(
@@ -198,9 +223,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const { sendOnEnter, sendSoundEnabled } = useSettingsStore();
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputContent.trim() && !selectedFile) return;
+
+    if (sendSoundEnabled) {
+      soundEffects.playSent();
+    }
 
     let mediaUrl: string | undefined = undefined;
     let mediaType: string | undefined = undefined;
@@ -238,9 +269,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+    if (sendOnEnter) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    } else {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleSend();
+      }
     }
   };
 

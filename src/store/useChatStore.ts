@@ -75,15 +75,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .from('chat_members')
         .select(`
           chat_id,
-          chats (
-            id,
-            type,
-            title,
-            avatar_url,
-            created_by,
-            created_at,
-            updated_at
-          )
+          chats (*)
         `)
         .eq('user_id', currentUserId);
 

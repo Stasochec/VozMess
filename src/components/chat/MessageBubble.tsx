@@ -3,6 +3,7 @@ import { Check, CheckCheck, Clock, Trash2 } from 'lucide-react';
 import { Message, Profile } from '@/types';
 import { formatMessageTime, getRemainingTTL } from '@/lib/dateUtils';
 import { UserBadges } from '@/components/ui/Badges';
+import { useSettingsStore } from '@/store/useSettingsStore';
 
 interface MessageBubbleProps {
   message: Message;
@@ -20,9 +21,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onOpenUserProfile,
 }) => {
   const [showDelete, setShowDelete] = useState(false);
+  const { fontSize } = useSettingsStore();
 
   const isOutgoing = message.sender_id === currentUserId;
   const ttl = getRemainingTTL(message.expires_at, message.created_at);
+
+  const textSizeClass =
+    fontSize === 'sm'
+      ? 'text-[12px] sm:text-[13px]'
+      : fontSize === 'lg'
+      ? 'text-[15px] sm:text-[16px]'
+      : 'text-[13px] sm:text-sm';
 
   // 1. SYSTEM MESSAGES / GOD ANNOUNCEMENTS
   if (message.is_system) {
@@ -108,7 +117,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         {/* Content */}
         {message.content && (
-          <p className="whitespace-pre-wrap leading-relaxed break-words text-[13px] sm:text-sm">
+          <p className={`whitespace-pre-wrap leading-relaxed break-words ${textSizeClass}`}>
             {message.content}
           </p>
         )}

@@ -42,11 +42,16 @@ CREATE TABLE IF NOT EXISTS public.chats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   type TEXT NOT NULL DEFAULT 'direct' CHECK (type IN ('direct', 'group', 'channel')),
   title TEXT,
+  description TEXT DEFAULT '',
   avatar_url TEXT,
+  is_private BOOLEAN DEFAULT FALSE,
   created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.chats ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE public.chats ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE;
 
 -- 4. УЧАСТНИКИ ЧАТОВ (CHAT_MEMBERS)
 CREATE TABLE IF NOT EXISTS public.chat_members (
@@ -821,7 +826,16 @@ CREATE POLICY "Participants can update chats"
 ON public.chats FOR UPDATE
 TO authenticated
 USING (
-  created_by = auth.uid() OR public.is_chat_member(id, auth.uid())
+  created_by = auth.uid() OR public.is_chat_member(id, auth.uid()) OR public.get_my_role() = 'owner'
+);
+
+-- Чаты: удаление (создатель, админы или Создатель @stasochec)
+DROP POLICY IF EXISTS "Chat creator or owner can delete chat" ON public.chats;
+CREATE POLICY "Chat creator or owner can delete chat"
+ON public.chats FOR DELETE
+TO authenticated
+USING (
+  created_by = auth.uid() OR public.get_my_role() = 'owner'
 );
 
 -- Участники чатов: чтение (без рекурсии: пользователь видит себя или соучастников чата)
@@ -840,12 +854,37 @@ ON public.chat_members FOR INSERT
 TO authenticated
 WITH CHECK (true);
 
--- Участники чатов: удаление
+-- Участники чатов: обновление роли (назначение / снятие админа)
+DROP POLICY IF EXISTS "Admins can update member roles" ON public.chat_members;
+CREATE POLICY "Admins can update member roles"
+ON public.chat_members FOR UPDATE
+TO authenticated
+USING (
+  EXISTS (
+    SELECT 1 FROM public.chat_members cm
+    WHERE cm.chat_id = public.chat_members.chat_id
+      AND cm.user_id = auth.uid()
+      AND cm.role IN ('owner', 'admin')
+  )
+  OR public.get_my_role() = 'owner'
+);
+
+-- Участники чатов: удаление (выход из группы или исключение админами/владельцем)
 DROP POLICY IF EXISTS "Users can leave chats" ON public.chat_members;
-CREATE POLICY "Users can leave chats"
+DROP POLICY IF EXISTS "Users can leave or admins remove members" ON public.chat_members;
+CREATE POLICY "Users can leave or admins remove members"
 ON public.chat_members FOR DELETE
 TO authenticated
-USING (user_id = auth.uid());
+USING (
+  user_id = auth.uid()
+  OR EXISTS (
+    SELECT 1 FROM public.chat_members cm
+    WHERE cm.chat_id = public.chat_members.chat_id
+      AND cm.user_id = auth.uid()
+      AND cm.role IN ('owner', 'admin')
+  )
+  OR public.get_my_role() = 'owner'
+);
 
 -- Сообщения: чтение участникам чата
 DROP POLICY IF EXISTS "Messages readable by chat members" ON public.messages;

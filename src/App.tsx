@@ -4,6 +4,7 @@ import { Sidebar } from '@/components/sidebar/Sidebar';
 import { ChatArea } from '@/components/chat/ChatArea';
 import { GodAdminPanel } from '@/components/admin/GodAdminPanel';
 import { ProfileModal } from '@/components/auth/ProfileModal';
+import { SettingsModal } from '@/components/settings/SettingsModal';
 import { NewChatModal } from '@/components/chat/NewChatModal';
 import { UserProfileModal } from '@/components/profile/UserProfileModal';
 import { GroupProfileModal } from '@/components/profile/GroupProfileModal';
@@ -13,7 +14,7 @@ import { Logo } from '@/components/ui/Logo';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
 import { useThemeStore } from '@/store/useThemeStore';
-import { isSupabaseConfigured } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { Profile, Chat } from '@/types';
 
@@ -25,6 +26,10 @@ function MessengerScreen() {
 
   const [isGodPanelOpen, setIsGodPanelOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    'profile' | 'notifications' | 'privacy' | 'appearance' | 'storage'
+  >('profile');
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
 
   // Profile inspection state (Telegram style)
@@ -55,6 +60,46 @@ function MessengerScreen() {
     return () => {
       unsubscribeFromRealtime();
     };
+  }, [user]);
+
+  // Support Telegram-style group invite links (#group=<chat_id>)
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured()) return;
+
+    const handleHashChange = async () => {
+      const hash = window.location.hash;
+      if (hash.includes('group=')) {
+        const match = hash.match(/group=([0-9a-fA-F-]+)/);
+        if (match && match[1]) {
+          const targetGroupId = match[1];
+          try {
+            const { data: member } = await supabase
+              .from('chat_members')
+              .select('id')
+              .eq('chat_id', targetGroupId)
+              .eq('user_id', user.id)
+              .maybeSingle();
+
+            if (!member) {
+              await supabase.from('chat_members').insert({
+                chat_id: targetGroupId,
+                user_id: user.id,
+                role: 'member',
+              });
+            }
+
+            await fetchChats();
+            setActiveChatId(targetGroupId);
+          } catch (err) {
+            console.error('Error handling group invite link:', err);
+          }
+        }
+      }
+    };
+
+    handleHashChange();
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, [user]);
 
   // 1. STRICT CONFIGURATION CHECK
@@ -95,7 +140,14 @@ function MessengerScreen() {
         >
           <Sidebar
             onOpenGodPanel={() => setIsGodPanelOpen(true)}
-            onOpenProfile={() => setIsProfileOpen(true)}
+            onOpenProfile={() => {
+              setSettingsInitialTab('profile');
+              setIsSettingsOpen(true);
+            }}
+            onOpenSettings={(tab) => {
+              setSettingsInitialTab(tab || 'profile');
+              setIsSettingsOpen(true);
+            }}
             onOpenNewChat={() => setIsNewChatOpen(true)}
           />
         </div>
@@ -120,6 +172,13 @@ function MessengerScreen() {
       )}
       {isProfileOpen && (
         <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
+      )}
+      {isSettingsOpen && (
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          initialTab={settingsInitialTab}
+          onClose={() => setIsSettingsOpen(false)}
+        />
       )}
       {isNewChatOpen && (
         <NewChatModal

@@ -12,6 +12,7 @@ import {
   X,
   Clock,
   Sparkles,
+  Settings,
 } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -26,12 +27,14 @@ interface SidebarProps {
   onOpenGodPanel: () => void;
   onOpenProfile: () => void;
   onOpenNewChat: () => void;
+  onOpenSettings?: (tab?: 'profile' | 'notifications' | 'privacy' | 'appearance' | 'storage') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   onOpenGodPanel,
   onOpenProfile,
   onOpenNewChat,
+  onOpenSettings,
 }) => {
   const { chats, activeChatId, setActiveChatId, searchQuery, setSearchQuery, activeFilter, setActiveFilter, isLoadingChats } =
     useChatStore();
@@ -274,7 +277,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div>
                 {/* Profile Header in Drawer */}
-                <div className="p-5 bg-gradient-to-br from-[#FF9500] to-[#FF5500] text-white">
+                <div
+                  onClick={() => {
+                    setIsDrawerOpen(false);
+                    if (onOpenSettings) onOpenSettings('profile');
+                    else onOpenProfile();
+                  }}
+                  className="p-5 bg-gradient-to-br from-[#FF9500] to-[#FF5500] text-white cursor-pointer hover:brightness-105 transition-all"
+                >
                   <div className="flex items-center justify-between mb-3">
                     <Avatar
                       name={profile?.display_name || 'Vozduxan'}
@@ -282,7 +292,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       size="lg"
                     />
                     <button
-                      onClick={() => setIsDrawerOpen(false)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsDrawerOpen(false);
+                      }}
                       className="p-1 rounded-full text-white/80 hover:text-white hover:bg-white/20 transition-colors"
                     >
                       <X className="w-5 h-5" />
@@ -341,12 +354,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     onClick={() => {
                       setIsDrawerOpen(false);
-                      onOpenProfile();
+                      if (onOpenSettings) onOpenSettings('profile');
+                      else onOpenProfile();
                     }}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#202027] transition-colors"
                   >
                     <User className="w-4 h-4 text-zinc-400" />
                     <span>Мой профиль</span>
+                  </button>
+
+                  {/* Telegram-style General Settings */}
+                  <button
+                    onClick={() => {
+                      setIsDrawerOpen(false);
+                      if (onOpenSettings) onOpenSettings('notifications');
+                      else onOpenProfile();
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-[#202027] transition-colors"
+                  >
+                    <Settings className="w-4 h-4 text-[#FF7A00]" />
+                    <span>Настройки</span>
                   </button>
 
                   {/* Theme Switcher */}
