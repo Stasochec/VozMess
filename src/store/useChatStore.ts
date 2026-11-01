@@ -24,6 +24,7 @@ interface ChatState {
   sendMessage: (chatId: string, content: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
+  deleteMessages: (messageIds: string[]) => Promise<void>;
   createDirectChat: (targetUser: Profile) => Promise<string | null>;
   createGroupChat: (title: string, memberIds: string[]) => Promise<string | null>;
   broadcastAnnouncement: (text: string) => Promise<{ success: boolean; error?: string }>;
@@ -270,6 +271,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await supabase.from('messages').delete().eq('id', messageId);
     } catch (err) {
       console.error('Failed to delete message:', err);
+    }
+  },
+
+  deleteMessages: async (messageIds: string[]) => {
+    if (!messageIds || messageIds.length === 0) return;
+    const idSet = new Set(messageIds);
+    set((state) => ({
+      messages: state.messages.filter((m) => !idSet.has(m.id)),
+    }));
+
+    if (!isSupabaseConfigured()) return;
+
+    try {
+      await supabase.from('messages').delete().in('id', messageIds);
+    } catch (err) {
+      console.error('Failed to delete messages batch:', err);
     }
   },
 

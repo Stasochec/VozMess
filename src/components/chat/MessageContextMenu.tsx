@@ -30,6 +30,7 @@ interface MessageContextMenuProps {
   onCopy?: (text: string) => void;
   onReact?: (message: Message, emoji: string) => void;
   onSaveMedia?: (mediaUrl: string) => void;
+  onSelect?: (message: Message) => void;
 }
 
 export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
@@ -46,6 +47,7 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
   onCopy,
   onReact,
   onSaveMedia,
+  onSelect,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -257,9 +259,12 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
             </button>
           )}
 
-          {/* Выделить */}
+          {/* Выделить (Telegram Select Mode) */}
           <button
-            onClick={onClose}
+            onClick={() => {
+              onSelect?.(message);
+              onClose();
+            }}
             className="w-full px-3.5 py-2 flex items-center gap-3 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-[#282834] transition-colors"
           >
             <CheckSquare className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />

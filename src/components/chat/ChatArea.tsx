@@ -13,6 +13,9 @@ import {
   Pencil,
   CornerUpLeft,
   Check,
+  Copy,
+  Trash2,
+  CheckSquare,
 } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -50,6 +53,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     sendMessage,
     editMessage,
     deleteMessage,
+    deleteMessages,
     isLoadingMessages,
   } = useChatStore();
   const { user, profile } = useAuthStore();
@@ -69,6 +73,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   } | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  // Selection Mode State (Telegram Multi-select)
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+  const [selectNotification, setSelectNotification] = useState<string | null>(null);
+  const [groupMemberCount, setGroupMemberCount] = useState<number | null>(null);
 
   // Lightbox Media Viewer State
   const [viewingMedia, setViewingMedia] = useState<{
@@ -96,6 +106,59 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
+
+  // Exit selection mode when active chat changes
+  useEffect(() => {
+    setIsSelectMode(false);
+    setSelectedMessageIds(new Set());
+  }, [activeChatId]);
+
+  // Escape key exits selection mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isSelectMode) {
+        setIsSelectMode(false);
+        setSelectedMessageIds(new Set());
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSelectMode]);
+
+  // Load group visible member count
+  useEffect(() => {
+    if (!activeChat || activeChat.type === 'direct' || !isSupabaseConfigured()) {
+      setGroupMemberCount(null);
+      return;
+    }
+
+    const fetchMemberCount = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('chat_members')
+          .select('user_id, profiles(*)')
+          .eq('chat_id', activeChat.id);
+
+        if (!error && data) {
+          const isGod =
+            profile?.username?.toLowerCase() === 'stasochec' || profile?.role === 'owner';
+          const visible = data.filter((item) => {
+            const prof = (item as unknown as { profiles: Profile }).profiles;
+            if (!prof) return true;
+            if (prof.is_hidden) {
+              return prof.id === user?.id || isGod;
+            }
+            return true;
+          });
+          setGroupMemberCount(visible.length);
+        }
+      } catch (e) {
+        console.warn('Failed to load group member count:', e);
+      }
+    };
+
+    fetchMemberCount();
+  }, [activeChat?.id, user?.id, profile?.username]);
 
   // 1. REALTIME SUBSCRIPTION PER ACTIVE CHAT WITH CLEANUP
   useEffect(() => {
@@ -290,6 +353,81 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setReplyingMessage(null);
     setInputContent(msg.content || '');
     textareaRef.current?.focus();
+  };
+
+  // Selection Mode Actions
+  const handleStartSelect = (msg: Message) => {
+    setIsSelectMode(true);
+    setSelectedMessageIds(new Set([msg.id]));
+  };
+
+  const handleToggleSelect = (messageId: string) => {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
+
+  const handleExitSelectMode = () => {
+    setIsSelectMode(false);
+    setSelectedMessageIds(new Set());
+  };
+
+  const handleSelectAll = () => {
+    setSelectedMessageIds(new Set(messages.map((m) => m.id)));
+  };
+
+  const handleCopySelected = async () => {
+    if (selectedMessageIds.size === 0) return;
+    const selectedMsgs = messages
+      .filter((m) => selectedMessageIds.has(m.id))
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    const text = selectedMsgs
+      .map((m) => {
+        const sender = m.sender?.display_name || 'Пользователь';
+        return `${sender}: ${m.content || (m.media_url ? '[Медиафайл]' : '')}`;
+      })
+      .join('\n\n');
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setSelectNotification('Скопировано!');
+      setTimeout(() => setSelectNotification(null), 2500);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedMessageIds.size === 0) return;
+
+    const deletableMsgs = messages.filter(
+      (m) => selectedMessageIds.has(m.id) && (m.sender_id === user?.id || isOwnerOrMod)
+    );
+
+    if (deletableMsgs.length === 0) {
+      alert(
+        'У вас нет прав для удаления выбранных сообщений (можно удалять только свои сообщения, если вы не создатель/модератор).'
+      );
+      return;
+    }
+
+    const confirmText =
+      deletableMsgs.length < selectedMessageIds.size
+        ? `Вы можете удалить только ${deletableMsgs.length} из ${selectedMessageIds.size} выбранных сообщений (ваши сообщения). Удалить их?`
+        : `Удалить выбранные сообщения (${deletableMsgs.length})?`;
+
+    if (window.confirm(confirmText)) {
+      const idsToDelete = deletableMsgs.map((m) => m.id);
+      await deleteMessages(idsToDelete);
+      handleExitSelectMode();
+    }
   };
 
   const handleSend = async (e?: React.FormEvent) => {
@@ -509,7 +647,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     formatLastSeen(activeChat.other_user.last_seen)
                   )
                 ) : (
-                  `${activeChat.members?.length || 1} участников • нажми для настроек ⚙️`
+                  `${groupMemberCount !== null ? groupMemberCount : 1} ${
+                    groupMemberCount === 1 ? 'участник' : 'участников'
+                  } • нажми для настроек ⚙️`
                 )}
               </p>
             </div>
@@ -569,6 +709,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               message={msg}
               currentUserId={user?.id}
               isOwnerOrMod={isOwnerOrMod}
+              isSelectMode={isSelectMode}
+              isSelected={selectedMessageIds.has(msg.id)}
+              onToggleSelect={handleToggleSelect}
               onDelete={deleteMessage}
               onOpenUserProfile={onOpenUserProfile}
               onOpenMedia={(url, type, caption, senderName, createdAt) =>
@@ -709,72 +852,132 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* 8. BOTTOM INPUT BAR (MOBILE VIRTUAL KEYBOARD OPTIMIZED) */}
-      <footer className="p-2 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F] pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
-        <div className="max-w-4xl mx-auto flex items-end gap-1.5 sm:gap-2">
-          {/* File input (Camera or Gallery) */}
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept="image/*"
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="w-10 h-10 rounded-xl text-zinc-500 dark:text-zinc-400 hover:text-[#FF7A00] hover:bg-zinc-100 dark:hover:bg-[#25252E] active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
-            title="Прикрепить изображение (или вставьте Ctrl+V)"
-          >
-            <Paperclip className="w-5 h-5" />
-          </button>
+      {/* 8. BOTTOM ACTION BAR: SELECTION BAR (TELEGRAM STYLE) OR NORMAL INPUT BAR */}
+      {isSelectMode ? (
+        <footer className="p-2.5 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F] pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shadow-xl select-none">
+          <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+              <button
+                onClick={handleExitSelectMode}
+                className="p-2 rounded-xl text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-[#25252E] active:scale-95 transition-all cursor-pointer"
+                title="Отменить выбор (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100 truncate">
+                  Выбрано: {selectedMessageIds.size}
+                </span>
+                <button
+                  onClick={
+                    selectedMessageIds.size === messages.length
+                      ? () => setSelectedMessageIds(new Set())
+                      : handleSelectAll
+                  }
+                  className="text-xs text-[#FF7A00] hover:underline font-semibold ml-1 cursor-pointer whitespace-nowrap"
+                >
+                  {selectedMessageIds.size === messages.length ? 'Снять всё' : 'Выбрать все'}
+                </button>
+              </div>
+            </div>
 
-          {/* Text input with Paste support and Auto-resize */}
-          <div className="flex-1 relative flex items-center bg-zinc-100 dark:bg-[#22222B] rounded-2xl border border-transparent focus-within:border-[#FF7A00] dark:focus-within:border-[#FF7A00] transition-all px-3 py-1">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={inputContent}
-              onChange={handleTextareaChange}
-              onPaste={handlePaste}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                editingMessage
-                  ? 'Измените текст сообщения...'
-                  : selectedFile
-                  ? 'Добавьте подпись к фото...'
-                  : 'Написать сообщение... (Enter для отправки)'
-              }
-              className="w-full bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none resize-none max-h-28 min-h-[26px] py-1 leading-relaxed"
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {selectNotification && (
+                <span className="text-[11px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
+                  {selectNotification}
+                </span>
+              )}
+              <button
+                onClick={handleCopySelected}
+                disabled={selectedMessageIds.size === 0}
+                className="px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-zinc-100 dark:bg-[#25252E] text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-[#30303B] active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
+                title="Копировать текст выбранных сообщений"
+              >
+                <Copy className="w-4 h-4 text-[#FF7A00]" />
+                <span className="hidden sm:inline">Копировать</span>
+              </button>
+
+              <button
+                onClick={handleDeleteSelected}
+                disabled={selectedMessageIds.size === 0}
+                className="px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-rose-500/15 text-rose-500 dark:text-rose-400 hover:bg-rose-500/25 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
+                title="Удалить выбранные сообщения"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>
+                  Удалить{selectedMessageIds.size > 0 ? ` (${selectedMessageIds.size})` : ''}
+                </span>
+              </button>
+            </div>
+          </div>
+        </footer>
+      ) : (
+        <footer className="p-2 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F] pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
+          <div className="max-w-4xl mx-auto flex items-end gap-1.5 sm:gap-2">
+            {/* File input (Camera or Gallery) */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept="image/*"
+              className="hidden"
             />
-
             <button
               type="button"
-              onClick={() => setShowEmojiPicker((prev) => !prev)}
-              className="p-1.5 text-zinc-400 hover:text-[#FF7A00] transition-colors ml-1"
-              title="Эмодзи"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-10 h-10 rounded-xl text-zinc-500 dark:text-zinc-400 hover:text-[#FF7A00] hover:bg-zinc-100 dark:hover:bg-[#25252E] active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
+              title="Прикрепить изображение (или вставьте Ctrl+V)"
             >
-              <Smile className="w-5 h-5" />
+              <Paperclip className="w-5 h-5" />
+            </button>
+
+            {/* Text input with Paste support and Auto-resize */}
+            <div className="flex-1 relative flex items-center bg-zinc-100 dark:bg-[#22222B] rounded-2xl border border-transparent focus-within:border-[#FF7A00] dark:focus-within:border-[#FF7A00] transition-all px-3 py-1">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={inputContent}
+                onChange={handleTextareaChange}
+                onPaste={handlePaste}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  editingMessage
+                    ? 'Измените текст сообщения...'
+                    : selectedFile
+                    ? 'Добавьте подпись к фото...'
+                    : 'Написать сообщение... (Enter для отправки)'
+                }
+                className="w-full bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none resize-none max-h-28 min-h-[26px] py-1 leading-relaxed"
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowEmojiPicker((prev) => !prev)}
+                className="p-1.5 text-zinc-400 hover:text-[#FF7A00] transition-colors ml-1"
+                title="Эмодзи"
+              >
+                <Smile className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Send or Save Edit button */}
+            <button
+              onClick={() => handleSend()}
+              disabled={(!inputContent.trim() && !selectedFile) || isUploading || isCompressing}
+              className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF9500] to-[#FF5500] hover:from-[#E66E00] hover:to-[#E03D00] disabled:opacity-40 disabled:pointer-events-none text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-[#FF7A00]/30 transition-transform active:scale-95"
+              title={editingMessage ? 'Сохранить изменения' : 'Отправить (Enter)'}
+            >
+              {isUploading ? (
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : editingMessage ? (
+                <Check className="w-5 h-5" />
+              ) : (
+                <Send className="w-4.5 h-4.5 ml-0.5" />
+              )}
             </button>
           </div>
-
-          {/* Send or Save Edit button */}
-          <button
-            onClick={() => handleSend()}
-            disabled={(!inputContent.trim() && !selectedFile) || isUploading || isCompressing}
-            className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF9500] to-[#FF5500] hover:from-[#E66E00] hover:to-[#E03D00] disabled:opacity-40 disabled:pointer-events-none text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-[#FF7A00]/30 transition-transform active:scale-95"
-            title={editingMessage ? 'Сохранить изменения' : 'Отправить (Enter)'}
-          >
-            {isUploading ? (
-              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : editingMessage ? (
-              <Check className="w-5 h-5" />
-            ) : (
-              <Send className="w-4.5 h-4.5 ml-0.5" />
-            )}
-          </button>
-        </div>
-      </footer>
+        </footer>
+      )}
 
       {/* FULLSCREEN LIGHTBOX MEDIA VIEWER */}
       {viewingMedia && (
@@ -803,6 +1006,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             onEdit={handleStartEdit}
             onPin={(msg) => setPinnedMessage(msg)}
             onDelete={(id) => deleteMessage(id)}
+            onSelect={handleStartSelect}
             onReact={async (msg, emoji) => {
               if (sendSoundEnabled) soundEffects.playSent();
               // Optionally send reaction or quick reply

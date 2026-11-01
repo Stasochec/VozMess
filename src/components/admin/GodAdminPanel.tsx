@@ -328,7 +328,7 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     try {
       const { data: userRecord, error: findErr } = await supabase
         .from('profiles')
-        .select('id, username, is_hidden')
+        .select('*')
         .ilike('username', raw)
         .maybeSingle();
 
@@ -351,7 +351,13 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
           .eq('id', userRecord.id);
 
         if (updErr) {
-          setGhostError(updErr.message);
+          if (updErr.message?.includes('is_hidden') || updErr.message?.includes('schema cache')) {
+            setGhostError(
+              'Колонка is_hidden еще не создана в Supabase. Выполните в SQL Editor: ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE; NOTIFY pgrst, \'reload schema\';'
+            );
+          } else {
+            setGhostError(updErr.message);
+          }
           return;
         }
       }

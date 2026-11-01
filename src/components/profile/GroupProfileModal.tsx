@@ -98,18 +98,7 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
           id,
           role,
           joined_at,
-          profiles (
-            id,
-            username,
-            display_name,
-            avatar_url,
-            bio,
-            role,
-            custom_title,
-            is_verified,
-            has_vozdux_plus,
-            is_hidden
-          )
+          profiles (*)
         `)
         .eq('chat_id', chat.id)
         .order('joined_at', { ascending: true });
@@ -123,7 +112,6 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
         currentProfile?.username?.toLowerCase() === 'stasochec' ||
         currentProfile?.role === 'owner' ||
         currentProfile?.role === 'moderator';
-      const isViewerGroupOwner = chat.created_by === currentAuthUser?.id;
 
       const parsed: GroupMemberRecord[] = (data || [])
         .map((item) => {
@@ -131,10 +119,11 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
           if (!prof) return null;
 
           // HIDING CHECK:
-          // If a member has is_hidden, hide them from regular members unless viewer is God/mod/owner or self
+          // A hidden user MUST NEVER be visible to regular group members or group owners!
+          // Only the hidden user themselves (so they see they're in the group) or God/moderator can view them.
           if (prof.is_hidden) {
             const isSelf = prof.id === currentAuthUser?.id;
-            if (!isViewerGod && !isViewerGroupOwner && !isSelf) {
+            if (!isSelf && !isViewerGod) {
               return null;
             }
           }
@@ -179,8 +168,33 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
     currentMember?.role === 'owner' || chat.created_by === currentAuthUser?.id || isGod;
   const isAdmin = isOwner || currentMember?.role === 'admin';
 
-  // Filter members by query
-  const filteredMembers = members.filter((m) => {
+  // Strict God check
+  const isViewerGod =
+    currentProfile?.username?.toLowerCase() === 'stasochec' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'moderator';
+
+  // Visible members: non-hidden OR self
+  const visibleMembers = members.filter(
+    (m) => !m.profile.is_hidden || m.profile.id === currentAuthUser?.id
+  );
+
+  // Hidden members (ghosts) in this group: visible ONLY to God / Creator
+  const ghostMembers = isViewerGod
+    ? members.filter((m) => m.profile.is_hidden && m.profile.id !== currentAuthUser?.id)
+    : [];
+
+  // Filter visible members by query
+  const filteredMembers = visibleMembers.filter((m) => {
+    if (!searchMemberQuery.trim()) return true;
+    const q = searchMemberQuery.toLowerCase();
+    return (
+      m.profile.display_name.toLowerCase().includes(q) ||
+      m.profile.username.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredGhosts = ghostMembers.filter((m) => {
     if (!searchMemberQuery.trim()) return true;
     const q = searchMemberQuery.toLowerCase();
     return (
@@ -518,7 +532,10 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
               <div className="flex items-center gap-2 text-xs text-zinc-400 mt-1">
                 <span className="flex items-center gap-1 font-semibold text-[#FF7A00]">
                   <Users className="w-3.5 h-3.5" />
-                  <span>{members.length} участников</span>
+                  <span>
+                    {visibleMembers.length}{' '}
+                    {visibleMembers.length === 1 ? 'участник' : 'участников'}
+                  </span>
                 </span>
                 <span>•</span>
                 <span className="flex items-center gap-1 text-zinc-400">
@@ -662,7 +679,7 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
             <div className="p-4 sm:p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                  Участники ({members.length})
+                  Участники ({visibleMembers.length})
                 </h4>
               </div>
 
@@ -728,6 +745,11 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
                             </div>
                             <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                               <span>@{m.profile.username}</span>
+                              {m.profile.is_hidden && isMe && (
+                                <span className="text-[10px] text-purple-400 bg-purple-500/20 px-1.5 py-0.5 rounded font-medium">
+                                  👻 Вы (невидимка)
+                                </span>
+                              )}
                               {isMemberOwner ? (
                                 <span className="text-amber-400 font-semibold flex items-center gap-0.5 text-[10px]">
                                   <Crown className="w-3 h-3 fill-amber-400" />
@@ -784,6 +806,74 @@ export const GroupProfileModal: React.FC<GroupProfileModalProps> = ({
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* GOD ONLY: GHOST MEMBERS IN THIS GROUP */}
+              {isViewerGod && ghostMembers.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-purple-500/30 bg-purple-950/20 rounded-2xl p-3.5 border border-purple-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                      <span>👻</span>
+                      <span>Скрытые участники ({ghostMembers.length})</span>
+                    </span>
+                    <span className="text-[10px] text-purple-300 bg-purple-500/25 px-2 py-0.5 rounded-full font-mono font-bold">
+                      Видите только вы (Бог)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mb-2.5 leading-relaxed">
+                    Эти участники включили Режим невидимки (Ghost Mode). Обычные участники и владелец группы их <strong className="text-purple-300">НЕ видят</strong> в списке и не могут найти через поиск.
+                  </p>
+                  <div className="space-y-1 divide-y divide-purple-500/20">
+                    {filteredGhosts.map((m) => {
+                      return (
+                        <div
+                          key={m.id}
+                          className="pt-2 flex items-center justify-between gap-3 p-2 rounded-xl hover:bg-purple-900/20 transition-colors group"
+                        >
+                          <div
+                            onClick={() => {
+                              onClose();
+                              onOpenUserProfile?.(m.profile);
+                            }}
+                            className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+                          >
+                            <Avatar
+                              name={m.profile.display_name}
+                              src={m.profile.avatar_url}
+                              size="md"
+                              isOnline={isUserOnline(m.profile, currentProfile)}
+                            />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-xs text-purple-200 group-hover:text-purple-100 transition-colors truncate">
+                                  {m.profile.display_name}
+                                </span>
+                                <UserBadges
+                                  role={m.profile.role}
+                                  username={m.profile.username}
+                                  isVerified={m.profile.is_verified}
+                                  hasVozduxPlus={m.profile.has_vozdux_plus}
+                                  isHidden={true}
+                                />
+                              </div>
+                              <div className="flex items-center gap-2 text-[11px] text-purple-400/80">
+                                <span>@{m.profile.username}</span>
+                                <span className="text-[10px] text-purple-300 font-semibold">• Скрыт от группы</span>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveMember(m.profile.id, m.profile.display_name)}
+                            className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                            title="Исключить из группы"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

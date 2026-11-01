@@ -9,6 +9,9 @@ interface MessageBubbleProps {
   message: Message;
   currentUserId?: string;
   isOwnerOrMod?: boolean;
+  isSelectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
   onOpenUserProfile?: (user: Profile) => void;
   onOpenMedia?: (
@@ -25,6 +28,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
   currentUserId,
   isOwnerOrMod = false,
+  isSelectMode = false,
+  isSelected = false,
+  onToggleSelect,
   onDelete,
   onOpenUserProfile,
   onOpenMedia,
@@ -46,8 +52,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   // 1. SYSTEM MESSAGES / GOD ANNOUNCEMENTS
   if (message.is_system) {
     return (
-      <div className="flex justify-center my-3 px-4">
-        <div className="max-w-lg rounded-2xl p-3.5 bg-gradient-to-r from-orange-500/15 via-amber-500/20 to-orange-500/15 border border-[#FF7A00]/40 shadow-[0_4px_20px_rgba(255,122,0,0.15)] text-center backdrop-blur-sm">
+      <div
+        onClick={() => {
+          if (isSelectMode) onToggleSelect?.(message.id);
+        }}
+        className={`flex justify-center my-3 px-4 ${isSelectMode ? 'cursor-pointer' : ''}`}
+      >
+        <div
+          className={`max-w-lg rounded-2xl p-3.5 bg-gradient-to-r from-orange-500/15 via-amber-500/20 to-orange-500/15 border shadow-[0_4px_20px_rgba(255,122,0,0.15)] text-center backdrop-blur-sm transition-all ${
+            isSelected
+              ? 'border-[#FF7A00] ring-2 ring-[#FF7A00] shadow-[0_0_15px_rgba(255,122,0,0.35)]'
+              : 'border-[#FF7A00]/40'
+          }`}
+        >
           <div className="flex items-center justify-center gap-1.5 text-xs font-black text-[#FFA033] mb-1">
             <span className="text-sm">⚡</span>
             <span className="uppercase tracking-wider">ОФИЦИАЛЬНОЕ ОПОВЕЩЕНИЕ</span>
@@ -71,14 +88,37 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   // 2. NORMAL CHAT MESSAGES
   return (
     <div
-      className={`group flex items-end gap-1.5 my-1.5 px-3 sm:px-4 ${
+      className={`group flex items-end gap-2 my-1.5 px-3 sm:px-4 ${
         isOutgoing ? 'justify-end' : 'justify-start'
       }`}
       onMouseEnter={() => setShowDelete(true)}
       onMouseLeave={() => setShowDelete(false)}
     >
-      {/* Delete quick action */}
-      {isOutgoing && (showDelete || isOwnerOrMod) && onDelete && (
+      {/* Checkbox for Select Mode (Telegram style on left) */}
+      {isSelectMode && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect?.(message.id);
+          }}
+          className="self-center p-1 cursor-pointer flex-shrink-0 transition-transform active:scale-90"
+          title={isSelected ? 'Снять выделение' : 'Выделить сообщение'}
+        >
+          <div
+            className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+              isSelected
+                ? 'bg-[#FF7A00] text-white shadow-[0_0_8px_rgba(255,122,0,0.5)] scale-110'
+                : 'border-2 border-zinc-400 dark:border-zinc-500 hover:border-[#FF7A00] bg-transparent'
+            }`}
+          >
+            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+          </div>
+        </button>
+      )}
+
+      {/* Delete quick action (desktop hover when not in select mode) */}
+      {!isSelectMode && isOutgoing && (showDelete || isOwnerOrMod) && onDelete && (
         <button
           onClick={() => onDelete(message.id)}
           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-rose-500 rounded"
@@ -93,16 +133,32 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          onOpenContextMenu?.(e, message);
+          if (isSelectMode) {
+            onToggleSelect?.(message.id);
+          } else {
+            onOpenContextMenu?.(e, message);
+          }
         }}
         onClick={(e) => {
+          if (isSelectMode) {
+            e.stopPropagation();
+            onToggleSelect?.(message.id);
+            return;
+          }
           // On mobile or on double click, open Telegram context menu
           if (typeof window !== 'undefined' && window.innerWidth < 768) {
             onOpenContextMenu?.(e, message);
           }
         }}
-        className={`relative max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2 text-sm shadow-sm transition-all cursor-pointer sm:cursor-default ${
-          isOutgoing
+        className={`relative max-w-[85%] sm:max-w-[70%] rounded-2xl px-3.5 py-2 text-sm shadow-sm transition-all ${
+          isSelectMode ? 'cursor-pointer select-none' : 'cursor-pointer sm:cursor-default'
+        } ${
+          isSelected
+            ? 'ring-2 ring-[#FF7A00] shadow-[0_0_14px_rgba(255,122,0,0.35)] ' +
+              (isOutgoing
+                ? 'bg-amber-100 dark:bg-[#b85200] border-orange-400'
+                : 'bg-zinc-100 dark:bg-[#2b2b36] border-orange-400')
+            : isOutgoing
             ? 'bg-[#FFEADC] dark:bg-[#994200] text-zinc-900 dark:text-zinc-50 rounded-br-none border border-orange-200/50 dark:border-orange-600/30'
             : 'bg-white dark:bg-[#212127] text-zinc-900 dark:text-zinc-100 rounded-bl-none border border-zinc-200/60 dark:border-[#2C2C35]'
         }`}
@@ -110,7 +166,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         {/* Sender info for group chats */}
         {!isOutgoing && message.sender && (
           <div
-            onClick={() => onOpenUserProfile?.(message.sender!)}
+            onClick={(e) => {
+              if (isSelectMode) {
+                e.stopPropagation();
+                onToggleSelect?.(message.id);
+                return;
+              }
+              onOpenUserProfile?.(message.sender!);
+            }}
             className="flex items-center gap-1.5 mb-1 text-[11px] font-bold text-[#FF7A00] dark:text-[#FFA033] cursor-pointer hover:underline"
             title="Открыть профиль"
           >
@@ -127,15 +190,20 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         {/* Media attachment */}
         {message.media_url && (
           <div
-            onClick={() =>
+            onClick={(e) => {
+              if (isSelectMode) {
+                e.stopPropagation();
+                onToggleSelect?.(message.id);
+                return;
+              }
               onOpenMedia?.(
                 message.media_url!,
                 message.media_type,
                 message.content,
                 message.sender?.display_name,
                 message.created_at
-              )
-            }
+              );
+            }}
             className="mb-2 rounded-xl overflow-hidden cursor-pointer relative group/img bg-black/5 dark:bg-black/25 max-w-full"
             title="Нажмите, чтобы открыть фото на весь экран"
           >
@@ -221,7 +289,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         )}
       </div>
 
-      {!isOutgoing && (showDelete || isOwnerOrMod) && isOwnerOrMod && onDelete && (
+      {!isSelectMode && !isOutgoing && (showDelete || isOwnerOrMod) && isOwnerOrMod && onDelete && (
         <button
           onClick={() => onDelete(message.id)}
           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-rose-500 rounded"

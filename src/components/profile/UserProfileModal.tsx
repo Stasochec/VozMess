@@ -94,6 +94,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   if (!isOpen || !user) return null;
 
   const isSelf = currentAuthUser?.id === user.id;
+  const isGod =
+    currentProfile?.username?.toLowerCase() === 'stasochec' ||
+    currentProfile?.role === 'owner' ||
+    currentProfile?.role === 'moderator';
+
+  // If target user is hidden and viewer is neither God nor self, block opening profile
+  if (!isSelf && !isGod && user.is_hidden) {
+    return null;
+  }
 
   const handleCopyUsername = () => {
     navigator.clipboard.writeText(`@${user.username}`);
