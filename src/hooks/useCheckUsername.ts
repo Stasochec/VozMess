@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export type UsernameStatus =
@@ -29,102 +29,121 @@ export const useCheckUsername = (
   const [isChecking, setIsChecking] = useState(false);
   const [message, setMessage] = useState('Минимум 3 символа (латиница, цифры, _)');
 
-  useEffect(() => {
-    const clean = rawUsername.trim().replace(/^@/, '');
+  // Request counter to avoid stale responses overwriting newer ones
+  const latestRequestIdRef = useRef(0);
 
-    // 1. Empty or too short
-    if (!clean || clean.length < 3) {
+  useEffect(() => {
+    const cleanUsername = rawUsername.trim().replace(/^@/, '');
+
+    // Increment request ID to invalidate any pending in-flight queries
+    const currentRequestId = ++latestRequestIdRef.current;
+
+    // 1. Client-side validation: Empty
+    if (cleanUsername.length === 0) {
       setIsChecking(false);
-      setStatus(clean.length === 0 ? 'idle' : 'too_short');
+      setStatus('idle');
       setMessage('Минимум 3 символа (латиница, цифры, _)');
       return;
     }
 
-    // 2. Too long
-    if (clean.length > 24) {
+    // 2. Client-side validation: Length < 3
+    if (cleanUsername.length < 3) {
+      setIsChecking(false);
+      setStatus('too_short');
+      setMessage('Минимум 3 символа (латиница, цифры, _)');
+      return;
+    }
+
+    // 3. Client-side validation: Length > 24
+    if (cleanUsername.length > 24) {
       setIsChecking(false);
       setStatus('too_long');
       setMessage('Максимальная длина — 24 символа');
       return;
     }
 
-    // 3. Invalid characters
-    if (!USERNAME_REGEX.test(clean)) {
+    // 4. Client-side validation: Disallow cyrillic, spaces, and special chars
+    if (!USERNAME_REGEX.test(cleanUsername)) {
       setIsChecking(false);
       setStatus('invalid_format');
       setMessage('Используйте только латинские буквы, цифры и _');
       return;
     }
 
-    // 4. Same as user's current username
-    if (currentUsername && clean.toLowerCase() === currentUsername.trim().toLowerCase()) {
+    // 5. User's own current username check (no network call needed)
+    if (currentUsername && cleanUsername.toLowerCase() === currentUsername.trim().toLowerCase()) {
       setIsChecking(false);
       setStatus('available');
       setMessage('Ваш текущий юзернейм');
       return;
     }
 
-    // If database isn't connected, assume valid if regex matches
+    // If Supabase is not configured, pass regex validation
     if (!isSupabaseConfigured()) {
       setIsChecking(false);
       setStatus('available');
-      setMessage(`@${clean.toLowerCase()} свободен`);
+      setMessage(`@${cleanUsername.toLowerCase()} свободен`);
       return;
     }
 
-    // 5. Debounced async network check in Supabase
+    // 6. Valid format passed: Initiate 300ms debounced RPC check
     setIsChecking(true);
     setStatus('checking');
     setMessage('Проверка доступности...');
 
-    let isCancelled = false;
-
     const timer = setTimeout(async () => {
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, username')
-          .ilike('username', clean)
-          .maybeSingle();
+        const { data: isAvailable, error } = await supabase.rpc('check_username_available', {
+          check_username: cleanUsername,
+        });
 
-        if (isCancelled) return;
-
-        if (error) {
-          console.warn('Username check query warning:', error.message);
-          setStatus('available');
-          setMessage(`@${clean.toLowerCase()} свободен`);
-          setIsChecking(false);
+        // Stale check: ignore if another request started in the meantime
+        if (currentRequestId !== latestRequestIdRef.current) {
           return;
         }
 
-        if (data) {
-          // If the match is the current user themselves
-          if (currentUserId && data.id === currentUserId) {
-            setStatus('available');
-            setMessage('Ваш текущий юзернейм');
-          } else {
+        if (error) {
+          console.warn('RPC check_username_available warning:', error.message);
+          // Fallback check via query if RPC fails
+          const { data: existingUser } = await supabase
+            .from('profiles')
+            .select('id')
+            .ilike('username', cleanUsername)
+            .maybeSingle();
+
+          if (currentRequestId !== latestRequestIdRef.current) return;
+
+          if (existingUser && (!currentUserId || existingUser.id !== currentUserId)) {
             setStatus('taken');
             setMessage('Этот юзернейм уже занят');
+          } else {
+            setStatus('available');
+            setMessage(`@${cleanUsername.toLowerCase()} свободен`);
           }
+          return;
+        }
+
+        if (isAvailable === false) {
+          setStatus('taken');
+          setMessage('Этот юзернейм уже занят');
         } else {
           setStatus('available');
-          setMessage(`@${clean.toLowerCase()} свободен`);
+          setMessage(`@${cleanUsername.toLowerCase()} свободен`);
         }
       } catch (err) {
-        if (!isCancelled) {
-          console.error('Network error during username check:', err);
+        if (currentRequestId === latestRequestIdRef.current) {
+          console.error('RPC network error:', err);
           setStatus('available');
-          setMessage(`@${clean.toLowerCase()} свободен`);
+          setMessage(`@${cleanUsername.toLowerCase()} свободен`);
         }
       } finally {
-        if (!isCancelled) {
+        if (currentRequestId === latestRequestIdRef.current) {
           setIsChecking(false);
         }
       }
-    }, 380); // 380ms debounce
+    }, 300); // 300ms debounce
 
     return () => {
-      isCancelled = true;
       clearTimeout(timer);
     };
   }, [rawUsername, currentUsername, currentUserId]);

@@ -162,14 +162,29 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 7. ФУНКЦИЯ ДЛЯ ВХОДА ПО @USERNAME (НАХОЖДЕНИЕ EMAIL)
-CREATE OR REPLACE FUNCTION public.get_email_by_username(user_identifier TEXT)
+-- 7. ФУНКЦИИ ПРОВЕРКИ НИКНЕЙМА И ВХОДА (RPC)
+CREATE OR REPLACE FUNCTION public.check_username_available(check_username TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  clean_nick TEXT;
+BEGIN
+  clean_nick := LOWER(REGEXP_REPLACE(check_username, '^@', ''));
+  RETURN NOT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE LOWER(username) = clean_nick
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.check_username_available(TEXT) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.get_email_by_username(p_username TEXT)
 RETURNS TEXT AS $$
 DECLARE
   found_email TEXT;
   clean_id TEXT;
 BEGIN
-  clean_id := LOWER(REGEXP_REPLACE(user_identifier, '^@', ''));
+  clean_id := LOWER(REGEXP_REPLACE(p_username, '^@', ''));
 
   SELECT u.email INTO found_email
   FROM auth.users u
@@ -180,6 +195,8 @@ BEGIN
   RETURN found_email;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.get_email_by_username(TEXT) TO anon, authenticated;
 
 -- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()

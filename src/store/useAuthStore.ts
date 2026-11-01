@@ -40,7 +40,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
       if (sessionError) {
-        console.warn('Session check error:', sessionError.message);
+        console.warn('Session check warning:', sessionError.message);
       }
 
       if (session?.user) {
@@ -51,7 +51,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .from('profiles')
           .select('*')
           .eq('id', session.user.id)
-          .single();
+          .maybeSingle();
 
         if (profileData) {
           set({ profile: profileData });
@@ -69,7 +69,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             .from('profiles')
             .select('*')
             .eq('id', newSession.user.id)
-            .single();
+            .maybeSingle();
 
           if (profileData) {
             set({ profile: profileData });
@@ -94,26 +94,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     try {
-      let resolvedEmail = identifier.trim();
+      let targetEmail = identifier.trim();
 
-      // If user provided @username instead of email
-      if (!resolvedEmail.includes('@')) {
-        const cleanUsername = resolvedEmail.replace(/^@/, '').toLowerCase();
-        
-        // Lookup email via database function
-        const { data: emailData, error: rpcErr } = await supabase.rpc('get_email_by_username', {
-          user_identifier: cleanUsername,
+      // If user provided username instead of email (no @ character)
+      if (!targetEmail.includes('@')) {
+        const cleanUsername = targetEmail.replace(/^@/, '').toLowerCase();
+
+        // 1. Call RPC function get_email_by_username
+        const { data: foundEmail, error: rpcErr } = await supabase.rpc('get_email_by_username', {
+          p_username: cleanUsername,
         });
 
-        if (rpcErr || !emailData) {
-          set({ isSubmitting: false });
-          return { error: `Пользователь @${cleanUsername} не найден. Проверьте никнейм.` };
+        if (rpcErr || !foundEmail) {
+          set({ isSubmitting: false, error: 'Пользователь с таким ником не найден' });
+          return { error: 'Пользователь с таким ником не найден' };
         }
-        resolvedEmail = emailData;
+        targetEmail = foundEmail;
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: resolvedEmail,
+        email: targetEmail,
         password,
       });
 
@@ -127,13 +127,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .from('profiles')
           .select('*')
           .eq('id', data.user.id)
-          .single();
+          .maybeSingle();
 
         set({
           user: data.user,
           session: data.session,
           profile: profileData,
           isSubmitting: false,
+          error: null,
         });
         return { success: true };
       }
@@ -156,24 +157,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
-    if (cleanUsername.length < 2) {
-      set({ isSubmitting: false, error: 'Никнейм должен содержать минимум 2 символа' });
-      return { error: 'Никнейм должен содержать минимум 2 символа' };
+    if (cleanUsername.length < 3) {
+      set({ isSubmitting: false, error: 'Никнейм должен содержать минимум 3 символа' });
+      return { error: 'Никнейм должен содержать минимум 3 символа' };
     }
 
     try {
-      // Check if username is already taken
-      const { data: existingUser } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', cleanUsername)
-        .maybeSingle();
+      // 1. Check availability via RPC
+      const { data: isAvailable } = await supabase.rpc('check_username_available', {
+        check_username: cleanUsername,
+      });
 
-      if (existingUser) {
+      if (isAvailable === false) {
         set({ isSubmitting: false, error: `Никнейм @${cleanUsername} уже занят другим пользователем` });
         return { error: `Никнейм @${cleanUsername} уже занят другим пользователем` };
       }
 
+      // 2. Perform Supabase Sign Up
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -191,21 +191,43 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       if (data.user) {
-        // Wait briefly for trigger on_auth_user_created to generate public.profiles row
-        await new Promise((r) => setTimeout(r, 600));
+        // If session was not immediately returned by signUp, auto-sign in
+        let activeSession = data.session;
+        if (!activeSession) {
+          const { data: signInData } = await supabase.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          });
+          if (signInData?.session) {
+            activeSession = signInData.session;
+          }
+        }
 
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
+        // Wait for on_auth_user_created trigger to generate public.profiles row
+        let loadedProfile: Profile | null = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const { data: p } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', data.user.id)
+            .maybeSingle();
 
+          if (p) {
+            loadedProfile = p;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 200));
+        }
+
+        // Instantly transition to authenticated state and open messenger
         set({
           user: data.user,
-          session: data.session,
-          profile: profileData,
+          session: activeSession,
+          profile: loadedProfile,
           isSubmitting: false,
+          error: null,
         });
+
         return { success: true };
       }
 

@@ -127,7 +127,7 @@ export const AuthScreen: React.FC = () => {
                     required
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder="stasochec или name@example.com"
+                    placeholder="username или name@example.com"
                     className="w-full pl-9 pr-3.5 py-2.5 bg-[#1C1C24] border border-[#2E2E3C] rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF7A00] transition-colors"
                   />
                 </div>
@@ -140,7 +140,6 @@ export const AuthScreen: React.FC = () => {
                   onChange={setUsername}
                   onValidationChange={setIsUsernameValid}
                   label="Уникальный никнейм (@username):"
-                  helperNote="Для создателя укажите никнейм stasochec"
                 />
 
                 <div>
