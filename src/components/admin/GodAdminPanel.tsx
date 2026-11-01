@@ -301,7 +301,12 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
           : `👁️ Аккаунт @${targetUser.username} снова видим для всех пользователей`
       );
     } else {
-      alert(updateErr.message || 'Ошибка обновления статуса видимости');
+      if (updateErr.message?.includes('is_hidden') || updateErr.message?.includes('schema cache')) {
+        setSearchError('Колонка "is_hidden" еще не создана в Supabase. Запустите SQL-скрипт в Supabase SQL Editor.');
+        alert('В базе Supabase еще нет колонки is_hidden. Выполните скрипт в Supabase SQL Editor:\n\nALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE;\nNOTIFY pgrst, \'reload schema\';');
+      } else {
+        setSearchError(updateErr.message || 'Ошибка обновления статуса видимости');
+      }
     }
   };
 
