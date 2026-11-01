@@ -202,7 +202,16 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
       });
 
       if (error) {
-        setConfirmEmailError(error.message);
+        if (
+          error.message?.includes('schema cache') ||
+          (error as { code?: string }).code === 'PGRST202'
+        ) {
+          setConfirmEmailError(
+            'Функция еще не создана в Supabase. Запустите SQL-скрипт функции в Supabase SQL Editor.'
+          );
+        } else {
+          setConfirmEmailError(error.message);
+        }
       } else if (!data?.success) {
         setConfirmEmailError(data?.error || 'Не удалось подтвердить почту');
       } else {

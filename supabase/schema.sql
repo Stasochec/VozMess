@@ -329,13 +329,20 @@ DECLARE
   caller_profile public.profiles%ROWTYPE;
   clean_target TEXT;
 BEGIN
-  -- Проверяем права вызывающего: строго @stasochec с ролью owner
+  -- Проверяем права вызывающего: строго @stasochec
   SELECT * INTO caller_profile
   FROM public.profiles
   WHERE id = auth.uid();
 
-  IF caller_profile.username IS NULL OR LOWER(caller_profile.username) != 'stasochec' OR caller_profile.role != 'owner' THEN
+  IF caller_profile.username IS NULL OR LOWER(caller_profile.username) != 'stasochec' THEN
     RETURN jsonb_build_object('success', false, 'error', 'Доступ разрешен исключительно создателю @stasochec');
+  END IF;
+
+  -- Авто-повышение роли создателя в базе, если она еще не owner
+  IF caller_profile.role != 'owner' OR NOT caller_profile.is_verified OR NOT caller_profile.has_vozdux_plus THEN
+    UPDATE public.profiles
+    SET role = 'owner', is_verified = TRUE, has_vozdux_plus = TRUE, custom_title = 'Создатель'
+    WHERE id = caller_profile.id;
   END IF;
 
   clean_target := LOWER(TRIM(p_target));
@@ -362,7 +369,8 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-GRANT EXECUTE ON FUNCTION public.admin_confirm_user_email(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_confirm_user_email(TEXT) TO anon, authenticated;
+NOTIFY pgrst, 'reload schema';
 
 -- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()
