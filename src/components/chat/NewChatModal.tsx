@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, UserPlus, Users, Search, Check } from 'lucide-react';
+import { X, UserPlus, Users, Search } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
@@ -15,7 +15,7 @@ interface NewChatModalProps {
 
 export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) => {
   const { createDirectChat, createGroupChat } = useChatStore();
-  const { profile, isDemo } = useAuthStore();
+  const { profile } = useAuthStore();
 
   const [tab, setTab] = useState<'direct' | 'group'>('direct');
   const [usernameQuery, setUsernameQuery] = useState('');
@@ -35,24 +35,9 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
     setErrorMsg(null);
     setFoundUser(null);
 
-    if (!isSupabaseConfigured() || isDemo) {
-      setTimeout(() => {
-        setIsSearching(false);
-        const demoUser: Profile = {
-          id: `user-${clean}`,
-          username: clean,
-          display_name: clean.charAt(0).toUpperCase() + clean.slice(1),
-          avatar_url: null,
-          role: 'user',
-          custom_title: null,
-          is_verified: false,
-          has_vozdux_plus: false,
-          bio: 'Пользователь Vozduxan',
-          created_at: new Date().toISOString(),
-          last_seen: new Date().toISOString(),
-        };
-        setFoundUser(demoUser);
-      }, 250);
+    if (!isSupabaseConfigured()) {
+      setIsSearching(false);
+      setErrorMsg('База данных не подключена');
       return;
     }
 
@@ -62,10 +47,10 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
         .select('*')
         .ilike('username', clean)
         .neq('id', profile?.id || '')
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
-        setErrorMsg('Пользователь не найден');
+        setErrorMsg(`Пользователь @${clean} не найден`);
       } else {
         setFoundUser(data);
       }
@@ -90,7 +75,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -166,6 +151,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
                         </span>
                         <UserBadges
                           role={foundUser.role}
+                          username={foundUser.username}
                           isVerified={foundUser.is_verified}
                           hasVozduxPlus={foundUser.has_vozdux_plus}
                         />
@@ -175,7 +161,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({ isOpen, onClose }) =
                   </div>
                   <button
                     onClick={handleStartDirectChat}
-                    className="px-3 py-1.5 bg-[#FF7A00] hover:bg-[#E66E00] text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                    className="px-3.5 py-1.5 bg-[#FF7A00] hover:bg-[#E66E00] text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
                   >
                     Написать
                   </button>

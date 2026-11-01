@@ -1,36 +1,21 @@
 import { create } from 'zustand';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { Profile, UserRole } from '@/types';
-
-// Mock profile for demo mode when Supabase isn't connected yet
-const DEMO_OWNER_PROFILE: Profile = {
-  id: 'demo-durov-id',
-  username: 'durov_vozdux',
-  display_name: 'Павел Дуров',
-  avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-  bio: 'Архитектор Vozduxan. Скорость, свобода и нулевая цензура.',
-  role: 'owner',
-  custom_title: 'Создатель Vozduxan',
-  is_verified: true,
-  has_vozdux_plus: true,
-  created_at: new Date().toISOString(),
-  last_seen: new Date().toISOString(),
-};
+import { Profile } from '@/types';
 
 interface AuthState {
   user: User | null;
   profile: Profile | null;
   session: Session | null;
-  isLoading: boolean;
-  isDemo: boolean;
+  isInitialLoading: boolean;
+  isSubmitting: boolean;
   error: string | null;
+
   init: () => Promise<void>;
-  signIn: (email: string, pass: string) => Promise<{ error?: string }>;
-  signUp: (email: string, pass: string, username: string, displayName: string) => Promise<{ error?: string }>;
+  signIn: (identifier: string, pass: string) => Promise<{ success?: boolean; error?: string }>;
+  signUp: (email: string, pass: string, username: string, displayName: string) => Promise<{ success?: boolean; error?: string }>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<Profile>) => Promise<{ error?: string }>;
-  loginAsDemo: (role?: UserRole) => void;
   clearError: () => void;
 }
 
@@ -38,37 +23,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   profile: null,
   session: null,
-  isLoading: true,
-  isDemo: false,
+  isInitialLoading: true,
+  isSubmitting: false,
   error: null,
 
   init: async () => {
-    set({ isLoading: true, error: null });
+    set({ isInitialLoading: true, error: null });
 
-    // Check if Supabase is properly configured
     if (!isSupabaseConfigured()) {
-      // Check if user previously selected demo
-      const savedDemo = localStorage.getItem('vozdux_demo_mode');
-      if (savedDemo === 'true') {
-        set({
-          user: { id: DEMO_OWNER_PROFILE.id, email: 'durov@vozduxan.app' } as unknown as User,
-          profile: DEMO_OWNER_PROFILE,
-          isDemo: true,
-          isLoading: false,
-        });
-        return;
-      }
-      set({ isLoading: false });
+      set({ isInitialLoading: false });
       return;
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      // 1. Check existing stored session
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        console.warn('Session check error:', sessionError.message);
+      }
 
       if (session?.user) {
-        set({ user: session.user, session, isDemo: false });
+        set({ user: session.user, session });
 
-        // Fetch user profile from public.profiles
+        // Fetch fresh profile from database
         const { data: profileData, error: profileErr } = await supabase
           .from('profiles')
           .select('*')
@@ -78,14 +56,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (profileData) {
           set({ profile: profileData });
         } else if (profileErr) {
-          console.warn('Profile fetch warning:', profileErr);
+          console.error('Failed to fetch profile:', profileErr.message);
         }
       }
 
-      // Listen for auth state changes
+      // 2. Setup auth state listener for automatic token refresh & login state sync
       supabase.auth.onAuthStateChange(async (event, newSession) => {
         if (newSession?.user) {
-          set({ user: newSession.user, session: newSession, isDemo: false });
+          set({ user: newSession.user, session: newSession });
+
           const { data: profileData } = await supabase
             .from('profiles')
             .select('*')
@@ -95,31 +74,53 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           if (profileData) {
             set({ profile: profileData });
           }
-        } else {
+        } else if (event === 'SIGNED_OUT') {
           set({ user: null, profile: null, session: null });
         }
       });
     } catch (err: unknown) {
       console.error('Auth initialization error:', err);
-      set({ error: err instanceof Error ? err.message : 'Ошибка инициализации авторизации' });
     } finally {
-      set({ isLoading: false });
+      set({ isInitialLoading: false });
     }
   },
 
-  signIn: async (email, password) => {
-    set({ error: null });
+  signIn: async (identifier, password) => {
+    set({ isSubmitting: true, error: null });
+
     if (!isSupabaseConfigured()) {
-      return { error: 'Supabase не подключен. Укажите URL и Anon Key или используйте Демо-режим.' };
+      set({ isSubmitting: false });
+      return { error: 'Конфигурация Supabase отсутствует.' };
     }
 
     try {
+      let resolvedEmail = identifier.trim();
+
+      // If user provided @username instead of email
+      if (!resolvedEmail.includes('@')) {
+        const cleanUsername = resolvedEmail.replace(/^@/, '').toLowerCase();
+        
+        // Lookup email via database function
+        const { data: emailData, error: rpcErr } = await supabase.rpc('get_email_by_username', {
+          user_identifier: cleanUsername,
+        });
+
+        if (rpcErr || !emailData) {
+          set({ isSubmitting: false });
+          return { error: `Пользователь @${cleanUsername} не найден. Проверьте никнейм.` };
+        }
+        resolvedEmail = emailData;
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: resolvedEmail,
         password,
       });
 
-      if (error) return { error: error.message };
+      if (error) {
+        set({ isSubmitting: false, error: error.message });
+        return { error: error.message };
+      }
 
       if (data.user) {
         const { data: profileData } = await supabase
@@ -128,31 +129,53 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .eq('id', data.user.id)
           .single();
 
-        set({ user: data.user, session: data.session, profile: profileData, isDemo: false });
+        set({
+          user: data.user,
+          session: data.session,
+          profile: profileData,
+          isSubmitting: false,
+        });
+        return { success: true };
       }
 
-      return {};
+      set({ isSubmitting: false });
+      return { success: true };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Ошибка входа';
-      set({ error: msg });
+      const msg = err instanceof Error ? err.message : 'Непредвиденная ошибка входа';
+      set({ isSubmitting: false, error: msg });
       return { error: msg };
     }
   },
 
   signUp: async (email, password, username, displayName) => {
-    set({ error: null });
+    set({ isSubmitting: true, error: null });
+
     if (!isSupabaseConfigured()) {
-      return { error: 'Supabase не подключен. Укажите URL и Anon Key или используйте Демо-режим.' };
+      set({ isSubmitting: false });
+      return { error: 'Конфигурация Supabase отсутствует.' };
+    }
+
+    const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (cleanUsername.length < 2) {
+      set({ isSubmitting: false, error: 'Никнейм должен содержать минимум 2 символа' });
+      return { error: 'Никнейм должен содержать минимум 2 символа' };
     }
 
     try {
-      const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
-      if (cleanUsername.length < 3) {
-        return { error: 'Имя пользователя должно содержать минимум 3 символа' };
+      // Check if username is already taken
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', cleanUsername)
+        .maybeSingle();
+
+      if (existingUser) {
+        set({ isSubmitting: false, error: `Никнейм @${cleanUsername} уже занят другим пользователем` });
+        return { error: `Никнейм @${cleanUsername} уже занят другим пользователем` };
       }
 
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim(),
         password,
         options: {
           data: {
@@ -162,56 +185,50 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         },
       });
 
-      if (error) return { error: error.message };
-
-      if (data.user) {
-        // Wait a tick for on_auth_user_created trigger
-        setTimeout(async () => {
-          const { data: profileData } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', data.user!.id)
-            .single();
-
-          if (profileData) {
-            set({ profile: profileData });
-          }
-        }, 800);
-
-        set({ user: data.user, session: data.session, isDemo: false });
+      if (error) {
+        set({ isSubmitting: false, error: error.message });
+        return { error: error.message };
       }
 
-      return {};
+      if (data.user) {
+        // Wait briefly for trigger on_auth_user_created to generate public.profiles row
+        await new Promise((r) => setTimeout(r, 600));
+
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+
+        set({
+          user: data.user,
+          session: data.session,
+          profile: profileData,
+          isSubmitting: false,
+        });
+        return { success: true };
+      }
+
+      set({ isSubmitting: false });
+      return { success: true };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Ошибка регистрации';
-      set({ error: msg });
+      set({ isSubmitting: false, error: msg });
       return { error: msg };
     }
   },
 
   signOut: async () => {
-    if (get().isDemo) {
-      localStorage.removeItem('vozdux_demo_mode');
-      set({ user: null, profile: null, session: null, isDemo: false });
-      return;
-    }
-
     try {
       await supabase.auth.signOut();
     } finally {
-      set({ user: null, profile: null, session: null, isDemo: false });
+      set({ user: null, profile: null, session: null });
     }
   },
 
   updateProfile: async (data: Partial<Profile>) => {
-    const { profile, isDemo } = get();
-    if (!profile) return { error: 'Нет активного профиля' };
-
-    if (isDemo) {
-      const updated = { ...profile, ...data };
-      set({ profile: updated });
-      return {};
-    }
+    const { profile } = get();
+    if (!profile) return { error: 'Профиль не найден' };
 
     try {
       const { data: updated, error } = await supabase
@@ -225,26 +242,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ profile: updated });
       return {};
     } catch (err: unknown) {
-      return { error: err instanceof Error ? err.message : 'Ошибка сохранения' };
+      return { error: err instanceof Error ? err.message : 'Ошибка сохранения данных' };
     }
-  },
-
-  loginAsDemo: (role: UserRole = 'owner') => {
-    const demoUser: Profile = {
-      ...DEMO_OWNER_PROFILE,
-      role,
-      is_verified: role === 'owner' || role === 'moderator',
-      has_vozdux_plus: true,
-      custom_title: role === 'owner' ? 'Создатель Vozduxan' : role === 'moderator' ? 'Старший Модератор' : null,
-    };
-
-    localStorage.setItem('vozdux_demo_mode', 'true');
-    set({
-      user: { id: demoUser.id, email: 'demo@vozduxan.app' } as unknown as User,
-      profile: demoUser,
-      isDemo: true,
-      isLoading: false,
-    });
   },
 
   clearError: () => set({ error: null }),

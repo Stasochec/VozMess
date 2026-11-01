@@ -1,5 +1,5 @@
 export type UserRole = 'owner' | 'moderator' | 'user';
-export type ChatType = 'direct' | 'group' | 'channel' | 'saved';
+export type ChatType = 'direct' | 'group' | 'channel';
 
 export interface Profile {
   id: string;
@@ -50,5 +50,5 @@ export interface Chat {
   last_message?: Message | null;
   unread_count?: number;
   members?: ChatMember[];
-  other_user?: Profile; // For direct chats
+  other_user?: Profile; // Для личных чатов (direct)
 }

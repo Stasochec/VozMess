@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, User, AtSign, FileText, Image as ImageIcon, LogOut, Check } from 'lucide-react';
+import { X, User, FileText, Image as ImageIcon, LogOut, Check } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { Avatar } from '@/components/ui/Avatar';
 import { UserBadges } from '@/components/ui/Badges';
@@ -38,14 +38,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95 }}
         className="w-full max-w-md bg-[#16161C] border border-[#2B2B36] rounded-2xl shadow-2xl overflow-hidden text-zinc-100"
       >
-        {/* Header */}
         <div className="px-6 py-4 bg-[#1B1B22] border-b border-[#282833] flex items-center justify-between">
           <h3 className="font-bold text-sm text-white">Мой профиль</h3>
           <button
@@ -56,7 +55,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
           </button>
         </div>
 
-        {/* Profile Info & Badges Preview */}
         <div className="p-6 space-y-5">
           <div className="flex items-center gap-4 p-4 rounded-xl bg-[#1B1B24] border border-[#2B2B38]">
             <Avatar name={profile.display_name} src={avatarUrl || profile.avatar_url} size="xl" />
@@ -67,6 +65,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 </span>
                 <UserBadges
                   role={profile.role}
+                  username={profile.username}
                   isVerified={profile.is_verified}
                   hasVozduxPlus={profile.has_vozdux_plus}
                   customTitle={profile.custom_title}
@@ -75,7 +74,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
               </div>
               <span className="text-xs text-[#FF8A1C] font-mono">@{profile.username}</span>
               <p className="text-xs text-zinc-400 mt-1 line-clamp-2">
-                {bio || 'Нет описания профиля'}
+                {bio || 'Пользуюсь мессенджером Vozduxan ⚡'}
               </p>
             </div>
           </div>
@@ -127,21 +126,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
               </div>
             </div>
 
-            <div className="flex gap-2 pt-2">
+            <div className="pt-2">
               <button
                 type="submit"
                 disabled={isSaving}
-                className="flex-1 py-2.5 bg-[#FF7A00] hover:bg-[#E66E00] text-white font-bold text-xs rounded-xl shadow-md shadow-[#FF7A00]/25 transition-colors flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 bg-[#FF7A00] hover:bg-[#E66E00] text-white font-bold text-xs rounded-xl shadow-md shadow-[#FF7A00]/25 transition-colors flex items-center justify-center gap-1.5"
               >
-                {saved ? <Check className="w-4 h-4" /> : null}
+                {saved && <Check className="w-4 h-4" />}
                 <span>{isSaving ? 'Сохранение...' : saved ? 'Сохранено!' : 'Сохранить изменения'}</span>
               </button>
             </div>
           </form>
 
-          {/* Sign out */}
-          <div className="pt-2 border-t border-[#262633] flex justify-between items-center">
-            <span className="text-xs text-zinc-500">Завершить текущий сеанс</span>
+          <div className="pt-3 border-t border-[#262633] flex justify-between items-center">
+            <span className="text-xs text-zinc-500">Завершить сеанс</span>
             <button
               onClick={() => {
                 signOut();
@@ -150,7 +148,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
               className="inline-flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-semibold transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Выйти</span>
+              <span>Выйти из аккаунта</span>
             </button>
           </div>
         </div>

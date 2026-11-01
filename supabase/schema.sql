@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- VOZDUXAN MESSENGER DATABASE SCHEMA (SUPABASE)
--- Полный самодостаточный скрипт инициализации БД
+-- Чистый production-скрипт с защитой для создателя @stasochec («Панель Бога»)
 -- Запускается в один клик в Supabase SQL Editor
 -- ==============================================================================
 
@@ -8,12 +8,12 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Попытка включить pg_cron (включен по умолчанию на Supabase Pro / кастомных инстансах)
+-- Попытка включить pg_cron для регулярной очистки сообщений
 DO $$
 BEGIN
   CREATE EXTENSION IF NOT EXISTS "pg_cron";
 EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE 'pg_cron extension not enabled or not allowed on this plan, falling back to manual or client-side checks';
+  RAISE NOTICE 'pg_cron extension not supported on this tier; cleanup function will still be available for invocation.';
 END $$;
 
 -- 2. ТАБЛИЦА ПРОФИЛЕЙ (PROFILES)
@@ -31,14 +31,13 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Индексы для быстрого поиска
-CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
+CREATE INDEX IF NOT EXISTS idx_profiles_username_lower ON public.profiles(LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON public.profiles(role);
 
 -- 3. ТАБЛИЦА ЧАТОВ (CHATS)
 CREATE TABLE IF NOT EXISTS public.chats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  type TEXT NOT NULL DEFAULT 'direct' CHECK (type IN ('direct', 'group', 'channel', 'saved')),
+  type TEXT NOT NULL DEFAULT 'direct' CHECK (type IN ('direct', 'group', 'channel')),
   title TEXT,
   avatar_url TEXT,
   created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
@@ -77,37 +76,37 @@ CREATE TABLE IF NOT EXISTS public.messages (
 CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON public.messages(chat_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_messages_expires_at ON public.messages(expires_at);
 
--- 6. ТРИГГЕР ДЛЯ ПЕРВОГО ПОЛЬЗОВАТЕЛЯ («ДУРОВ» / OWNER)
--- Самый первый зарегистрировавшийся в системе получает права Owner, статус Verified и Vozdux++!
+-- 6. ТРИГГЕР НАЗНАЧЕНИЯ «БОГА» (@stasochec) И РЕГИСТРАЦИИ ПОЛЬЗОВАТЕЛЕЙ
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 DECLARE
-  users_count INT;
   raw_username TEXT;
   clean_username TEXT;
+  raw_display_name TEXT;
 BEGIN
-  -- Считаем сколько профилей уже существует
-  SELECT COUNT(*) INTO users_count FROM public.profiles;
-
-  -- Формируем никнейм из метаданных или email
+  -- Извлекаем имя пользователя из user_metadata или email
   raw_username := COALESCE(
     NEW.raw_user_meta_data->>'username',
     SPLIT_PART(NEW.email, '@', 1)
   );
-  
-  -- Очистка от спецсимволов и дефолтное имя
+
   clean_username := LOWER(REGEXP_REPLACE(raw_username, '[^a-zA-Z0-9_]', '', 'g'));
-  IF clean_username IS NULL OR LENGTH(clean_username) < 3 THEN
-    clean_username := 'vozdux_' || SUBSTRING(NEW.id::text, 1, 6);
+  IF clean_username IS NULL OR LENGTH(clean_username) < 2 THEN
+    clean_username := 'user_' || SUBSTRING(NEW.id::text, 1, 6);
   END IF;
 
-  -- Проверка на уникальность
+  -- Проверка на уникальность для предотвращения коллизий
   IF EXISTS (SELECT 1 FROM public.profiles WHERE username = clean_username) THEN
     clean_username := clean_username || '_' || SUBSTRING(NEW.id::text, 1, 4);
   END IF;
 
-  IF users_count = 0 THEN
-    -- САМЫЙ ПЕРВЫЙ ПОЛЬЗОВАТЕЛЬ СТАНОВИТСЯ «ДУРОВЫМ» (OWNER)
+  raw_display_name := COALESCE(
+    NEW.raw_user_meta_data->>'display_name',
+    clean_username
+  );
+
+  -- ПРОВЕРКА СОЗДАТЕЛЯ: СТРОГО @stasochec ПОЛУЧАЕТ РОЛЬ OWNER И ПРИВИЛЕГИИ БОГА
+  IF clean_username = 'stasochec' THEN
     INSERT INTO public.profiles (
       id,
       username,
@@ -120,17 +119,17 @@ BEGIN
       has_vozdux_plus
     ) VALUES (
       NEW.id,
-      clean_username,
-      COALESCE(NEW.raw_user_meta_data->>'display_name', 'Создатель Vozduxan'),
+      'stasochec',
+      COALESCE(NEW.raw_user_meta_data->>'display_name', 'stasochec'),
       NEW.raw_user_meta_data->>'avatar_url',
-      'Создатель и архитектор мессенджера Vozduxan ⚡',
+      'Создатель и архитектор Vozduxan ⚡',
       'owner',
-      'Создатель Vozduxan',
+      'Создатель',
       TRUE,
       TRUE
     );
   ELSE
-    -- Обычный пользователь
+    -- Обычный зарегистрированный пользователь
     INSERT INTO public.profiles (
       id,
       username,
@@ -144,7 +143,7 @@ BEGIN
     ) VALUES (
       NEW.id,
       clean_username,
-      COALESCE(NEW.raw_user_meta_data->>'display_name', clean_username),
+      raw_display_name,
       NEW.raw_user_meta_data->>'avatar_url',
       'Пользуюсь мессенджером Vozduxan ⚡',
       'user',
@@ -158,33 +157,51 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Привязка триггера к таблице auth.users
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 7. ФУНКЦИЯ И ТРИГГЕРЫ TTL: УДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ
+-- 7. ФУНКЦИЯ ДЛЯ ВХОДА ПО @USERNAME (НАХОЖДЕНИЕ EMAIL)
+CREATE OR REPLACE FUNCTION public.get_email_by_username(user_identifier TEXT)
+RETURNS TEXT AS $$
+DECLARE
+  found_email TEXT;
+  clean_id TEXT;
+BEGIN
+  clean_id := LOWER(REGEXP_REPLACE(user_identifier, '^@', ''));
+
+  SELECT u.email INTO found_email
+  FROM auth.users u
+  JOIN public.profiles p ON p.id = u.id
+  WHERE LOWER(p.username) = clean_id
+  LIMIT 1;
+
+  RETURN found_email;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 8. АВТОУДАЛЕНИЕ СООБЩЕНИЙ СТАРШЕ 14 ДНЕЙ (STEAM-LIKE TTL)
 CREATE OR REPLACE FUNCTION public.delete_expired_messages()
 RETURNS INT AS $$
 DECLARE
   deleted_count INT;
 BEGIN
   DELETE FROM public.messages
-  WHERE expires_at <= NOW();
+  WHERE expires_at <= NOW() OR created_at < (NOW() - INTERVAL '14 days');
   GET DIAGNOSTICS deleted_count = ROW_COUNT;
   RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Планировщик pg_cron (каждый час проверяет и удаляет просроченные сообщения)
+-- Расписание pg_cron (каждый час)
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
     PERFORM cron.unschedule('clean-expired-messages-hourly');
   EXCEPTION WHEN OTHERS THEN NULL;
   END;
-  
+
   BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
       PERFORM cron.schedule(
@@ -194,16 +211,15 @@ BEGIN
       );
     END IF;
   EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'Skipping cron schedule registration (not supported in this environment)';
+    RAISE NOTICE 'Skipping cron schedule registration.';
   END;
 END $$;
 
--- 8. STORAGE: БАКЕТ ДЛЯ МЕДИА (chat-media)
+-- 9. STORAGE: БАКЕТ chat-media И ТРИГГЕР НА АВТОУДАЛЕНИЕ ФАЙЛОВ
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('chat-media', 'chat-media', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- Политики хранилища: чтение доступно всем, загрузка — авторизованным
 CREATE POLICY "Public Read chat-media"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'chat-media');
@@ -213,12 +229,11 @@ ON storage.objects FOR INSERT
 TO authenticated
 WITH CHECK (bucket_id = 'chat-media');
 
-CREATE POLICY "Authenticated Delete own media"
+CREATE POLICY "Authenticated Delete chat-media"
 ON storage.objects FOR DELETE
 TO authenticated
-USING (bucket_id = 'chat-media' AND (auth.uid() = owner OR auth.uid()::text = (storage.foldername(name))[1]));
+USING (bucket_id = 'chat-media');
 
--- Триггер для очистки файлов storage при удалении сообщения
 CREATE OR REPLACE FUNCTION public.cleanup_message_storage()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -233,7 +248,6 @@ BEGIN
   END IF;
   RETURN OLD;
 EXCEPTION WHEN OTHERS THEN
-  -- Не прерываем удаление сообщения, если удаление файла завершилось с ошибкой
   RETURN OLD;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -243,20 +257,22 @@ CREATE TRIGGER tr_cleanup_message_storage
   AFTER DELETE ON public.messages
   FOR EACH ROW EXECUTE FUNCTION public.cleanup_message_storage();
 
--- 9. RPC ДЛЯ ГЛОБАЛЬНОГО ОПОВЕЩЕНИЯ (ТОЛЬКО ДЛЯ РОЛИ OWNER)
-CREATE OR REPLACE FUNCTION public.broadcast_global_announcement(announcement_text TEXT)
+-- 10. RPC «ПАНЕЛИ БОГА»: ГЛОБАЛЬНЫЙ АНОНС ВО ВСЕ ЧАТЫ
+CREATE OR REPLACE FUNCTION public.broadcast_god_announcement(announcement_text TEXT)
 RETURNS VOID AS $$
 DECLARE
-  sender_role TEXT;
+  sender_user RECORD;
   chat_rec RECORD;
 BEGIN
-  -- Проверяем роль текущего пользователя
-  SELECT role INTO sender_role FROM public.profiles WHERE id = auth.uid();
-  IF sender_role <> 'owner' THEN
-    RAISE EXCEPTION 'Access denied. Only Owner can send global announcements.';
+  SELECT username, role INTO sender_user
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  -- Проверка прав: строго role owner и @stasochec
+  IF sender_user.role <> 'owner' OR LOWER(sender_user.username) <> 'stasochec' THEN
+    RAISE EXCEPTION 'Доступ запрещен. Только создатель @stasochec может делать глобальные анонсы.';
   END IF;
 
-  -- Отправляем системное сообщение во все существующие чаты
   FOR chat_rec IN SELECT id FROM public.chats LOOP
     INSERT INTO public.messages (
       chat_id,
@@ -267,7 +283,7 @@ BEGIN
     ) VALUES (
       chat_rec.id,
       auth.uid(),
-      '📢 ОФИЦИАЛЬНОЕ ОПОВЕЩЕНИЕ VOZDUXAN: ' || announcement_text,
+      '⚡ ОФИЦИАЛЬНЫЙ АНОНС ОТ @stasochec: ' || announcement_text,
       TRUE,
       NOW() + INTERVAL '14 days'
     );
@@ -275,7 +291,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 10. REALTIME ВКЛЮЧЕНИЕ
+-- 11. REALTIME ВКЛЮЧЕНИЕ ДЛЯ messages И profiles
 ALTER TABLE public.messages REPLICA IDENTITY FULL;
 ALTER TABLE public.profiles REPLICA IDENTITY FULL;
 ALTER TABLE public.chats REPLICA IDENTITY FULL;
@@ -304,47 +320,57 @@ BEGIN
   END;
 END $$;
 
--- 11. ROW LEVEL SECURITY (RLS) ПОЛИТИКИ
-
+-- 12. ROW LEVEL SECURITY (RLS) ПОЛИТИКИ
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
--- Профили: читать могут все аутентифицированные пользователи
+-- Профили: чтение всем авторизованным
 CREATE POLICY "Profiles readable by authenticated"
 ON public.profiles FOR SELECT
 TO authenticated
 USING (true);
 
--- Профили: редактировать может сам пользователь
+-- Профили: пользователь обновляет только свои данные, если не owner
 CREATE POLICY "Users can update own profile"
 ON public.profiles FOR UPDATE
 TO authenticated
 USING (auth.uid() = id)
 WITH CHECK (
-  auth.uid() = id 
+  auth.uid() = id
   AND (
-    -- Обычный юзер не может повысить себя до owner или выдать vozdux_plus
     (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'owner'
-    OR (role = (SELECT role FROM public.profiles WHERE id = auth.uid()) 
-        AND has_vozdux_plus = (SELECT has_vozdux_plus FROM public.profiles WHERE id = auth.uid())
-        AND is_verified = (SELECT is_verified FROM public.profiles WHERE id = auth.uid()))
+    OR (
+      role = (SELECT role FROM public.profiles WHERE id = auth.uid())
+      AND has_vozdux_plus = (SELECT has_vozdux_plus FROM public.profiles WHERE id = auth.uid())
+      AND is_verified = (SELECT is_verified FROM public.profiles WHERE id = auth.uid())
+    )
   )
 );
 
--- Профили: Owner может редактировать любой профиль (роли, бейджи, галочки)
-CREATE POLICY "Owner can update any profile"
+-- Профили: Создатель @stasochec («Панель Бога») может обновлять любые профили
+CREATE POLICY "God can update any profile"
 ON public.profiles FOR UPDATE
 TO authenticated
 USING (
-  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'owner'
+  EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid()
+    AND role = 'owner'
+    AND LOWER(username) = 'stasochec'
+  )
 )
 WITH CHECK (
-  (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'owner'
+  EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid()
+    AND role = 'owner'
+    AND LOWER(username) = 'stasochec'
+  )
 );
 
--- Чаты: читать могут участники чата
+-- Чаты: чтение участникам
 CREATE POLICY "Chats visible to participants"
 ON public.chats FOR SELECT
 TO authenticated
@@ -357,13 +383,13 @@ USING (
   OR created_by = auth.uid()
 );
 
--- Чаты: создавать может любой авторизованный пользователь
+-- Чаты: создание
 CREATE POLICY "Authenticated users can create chats"
 ON public.chats FOR INSERT
 TO authenticated
 WITH CHECK (true);
 
--- Чаты: обновлять могут участники
+-- Чаты: обновление
 CREATE POLICY "Participants can update chats"
 ON public.chats FOR UPDATE
 TO authenticated
@@ -400,7 +426,7 @@ ON public.chat_members FOR DELETE
 TO authenticated
 USING (user_id = auth.uid());
 
--- Сообщения: чтение только участникам чата
+-- Сообщения: чтение участникам чата
 CREATE POLICY "Messages readable by chat members"
 ON public.messages FOR SELECT
 TO authenticated
@@ -412,7 +438,7 @@ USING (
   )
 );
 
--- Сообщения: отправка участниками чата
+-- Сообщения: отправка участникам чата
 CREATE POLICY "Messages insertable by chat members"
 ON public.messages FOR INSERT
 TO authenticated
@@ -425,8 +451,8 @@ WITH CHECK (
   )
 );
 
--- Сообщения: удаление автором сообщения или модератором/овнером
-CREATE POLICY "Authors or mods can delete messages"
+-- Сообщения: удаление автором, модератором или Богом (@stasochec)
+CREATE POLICY "Authors, mods or God can delete messages"
 ON public.messages FOR DELETE
 TO authenticated
 USING (

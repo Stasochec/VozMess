@@ -2,30 +2,28 @@ import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { ChatArea } from '@/components/chat/ChatArea';
-import { DurovAdminPanel } from '@/components/admin/DurovAdminPanel';
+import { GodAdminPanel } from '@/components/admin/GodAdminPanel';
 import { ProfileModal } from '@/components/auth/ProfileModal';
-import { SupabaseSetupModal } from '@/components/auth/SupabaseSetupModal';
 import { NewChatModal } from '@/components/chat/NewChatModal';
-import { AuthModal } from '@/components/auth/AuthModal';
+import { AuthScreen } from '@/components/auth/AuthScreen';
+import { ConfigErrorScreen } from '@/components/ui/ConfigErrorScreen';
+import { Logo } from '@/components/ui/Logo';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useChatStore } from '@/store/useChatStore';
 import { useThemeStore } from '@/store/useThemeStore';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import { Database, Crown, AlertCircle } from 'lucide-react';
 
 function MessengerScreen() {
-  const { init: initAuth, user, profile, isDemo, isLoading } = useAuthStore();
+  const { init: initAuth, user, isInitialLoading } = useAuthStore();
   const { fetchChats, subscribeToRealtime, unsubscribeFromRealtime, activeChatId, setActiveChatId } =
     useChatStore();
   const { theme } = useThemeStore();
 
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isGodPanelOpen, setIsGodPanelOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
 
-  // Initialize theme on mount
+  // Sync theme attribute with documentElement
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -34,66 +32,67 @@ function MessengerScreen() {
     }
   }, [theme]);
 
-  // Initialize Auth & Data
+  // Initialize auth session on mount
   useEffect(() => {
-    initAuth().then(() => {
+    initAuth();
+  }, []);
+
+  // When user is authenticated, load chats and subscribe to realtime stream
+  useEffect(() => {
+    if (user && isSupabaseConfigured()) {
       fetchChats();
       subscribeToRealtime();
-    });
+    }
 
     return () => {
       unsubscribeFromRealtime();
     };
-  }, []);
+  }, [user]);
 
-  const isConfigured = isSupabaseConfigured();
+  // 1. STRICT CONFIGURATION CHECK
+  // If Supabase credentials are missing or invalid, block access and show config screen
+  if (!isSupabaseConfigured()) {
+    return <ConfigErrorScreen />;
+  }
 
-  return (
-    <div className="flex flex-col h-[100dvh] w-[100dvw] bg-[#0F0F12] text-zinc-100 overflow-hidden font-sans">
-      {/* Top Banner when running in Demo or Supabase awaiting configuration */}
-      {!isConfigured && (
-        <div className="bg-gradient-to-r from-amber-600/90 via-orange-600/90 to-amber-700/90 text-white px-3 py-1.5 text-xs font-semibold flex items-center justify-between z-30 shadow-md">
-          <div className="flex items-center gap-2">
-            <span className="p-0.5 rounded bg-black/20 text-white font-mono text-[10px]">
-              {isDemo ? '👑 DUROV DEMO' : '⚡ ПРЕДПРОСМОТР'}
-            </span>
-            <span className="truncate">
-              {isDemo
-                ? 'Вы вошли как Создатель (Павел Дуров). База данных работает в оффлайн-режиме.'
-                : 'Supabase не подключен. Работает демо-режим с автоудалением 14 дней.'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => setIsSupabaseOpen(true)}
-              className="px-2.5 py-0.5 bg-black/30 hover:bg-black/50 text-white rounded-md text-[11px] font-bold border border-white/30 transition-colors flex items-center gap-1"
-            >
-              <Database className="w-3 h-3" />
-              <span>Подключить Supabase</span>
-            </button>
+  // 2. LOADING SCREEN WHILE CHECKING STORED SESSION
+  if (isInitialLoading) {
+    return (
+      <div className="h-[100dvh] w-[100dvw] flex flex-col items-center justify-center bg-[#0F0F12] select-none text-zinc-100 font-sans">
+        <div className="flex flex-col items-center gap-6">
+          <Logo size="xl" variant="icon-only" />
+          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400">
+            <span className="w-4 h-4 border-2 border-[#FF7A00] border-t-transparent rounded-full animate-spin" />
+            <span>Подключение к Vozduxan Core...</span>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* Main Telegram Layout Container */}
+  // 3. STRICT AUTH GATE: NO ACCESS WITHOUT VALID LOGGED IN SESSION
+  if (!user) {
+    return <AuthScreen />;
+  }
+
+  // 4. MAIN MESSENGER INTERFACE
+  return (
+    <div className="flex flex-col h-[100dvh] w-[100dvw] bg-[#0F0F12] text-zinc-100 overflow-hidden font-sans">
       <div className="flex-1 flex w-full h-full overflow-hidden relative">
-        {/* Left Sidebar (visible on desktop or when no chat is active on mobile) */}
+        {/* Left Sidebar */}
         <div
           className={`h-full ${
             activeChatId ? 'hidden md:flex' : 'flex w-full md:w-auto'
           }`}
         >
           <Sidebar
-            onOpenAdminPanel={() => setIsAdminOpen(true)}
+            onOpenGodPanel={() => setIsGodPanelOpen(true)}
             onOpenProfile={() => setIsProfileOpen(true)}
-            onOpenSupabase={() => setIsSupabaseOpen(true)}
             onOpenNewChat={() => setIsNewChatOpen(true)}
-            onOpenAuth={() => setIsAuthOpen(true)}
           />
         </div>
 
-        {/* Right Active Chat Pane (visible on desktop or when chat is selected on mobile) */}
+        {/* Right Active Chat Pane */}
         <div
           className={`flex-1 h-full ${
             activeChatId ? 'flex w-full' : 'hidden md:flex'
@@ -103,12 +102,10 @@ function MessengerScreen() {
         </div>
       </div>
 
-      {/* Global Modals */}
-      <DurovAdminPanel isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
+      {/* Modals */}
+      <GodAdminPanel isOpen={isGodPanelOpen} onClose={() => setIsGodPanelOpen(false)} />
       <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
-      <SupabaseSetupModal isOpen={isSupabaseOpen} onClose={() => setIsSupabaseOpen(false)} />
       <NewChatModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} />
-      <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
     </div>
   );
 }

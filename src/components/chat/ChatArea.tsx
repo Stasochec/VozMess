@@ -4,11 +4,7 @@ import {
   Paperclip,
   Smile,
   Send,
-  MoreVertical,
   Clock,
-  Shield,
-  Image as ImageIcon,
-  Check,
   X,
 } from 'lucide-react';
 import { useChatStore } from '@/store/useChatStore';
@@ -24,7 +20,7 @@ interface ChatAreaProps {
 }
 
 export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
-  const { chats, activeChatId, messages, sendMessage, deleteMessage } = useChatStore();
+  const { chats, activeChatId, messages, sendMessage, deleteMessage, isLoadingMessages } = useChatStore();
   const { user, profile } = useAuthStore();
 
   const [inputContent, setInputContent] = useState('');
@@ -38,7 +34,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
 
   const activeChat = chats.find((c) => c.id === activeChatId);
 
-  // Auto-scroll to bottom whenever messages update
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -46,13 +41,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
   if (!activeChat) {
     return (
       <div className="flex-1 hidden md:flex flex-col items-center justify-center p-8 bg-zinc-100 dark:bg-[#0F0F12] select-none text-center">
-        <div className="p-6 rounded-3xl bg-white/50 dark:bg-[#16161C]/50 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 max-w-sm flex flex-col items-center">
+        <div className="p-8 rounded-3xl bg-white/60 dark:bg-[#16161C]/60 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 max-w-sm flex flex-col items-center">
           <Logo size="lg" variant="full" />
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 leading-relaxed">
-            Выберите чат в левом списке или начните новый диалог. Все сообщения защищены и автоматически удаляются через 14 дней.
+            Выберите диалог в левой колонке или начните новый. Все сообщения защищены и автоматически удаляются через 14 дней.
           </p>
           <div className="mt-4 px-3 py-1 rounded-full bg-orange-500/10 text-[#FF7A00] text-[11px] font-semibold border border-orange-500/20">
-            ⚡ Vozduxan Protocol v1.4
+            ⚡ Vozduxan Protocol • TTL 14 Days
           </div>
         </div>
       </div>
@@ -69,9 +64,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
       ? activeChat.other_user.avatar_url
       : activeChat.avatar_url;
 
-  const isOwnerOrMod = profile?.role === 'owner' || profile?.role === 'moderator';
+  const isOwnerOrMod =
+    profile?.role === 'owner' ||
+    profile?.role === 'moderator' ||
+    profile?.username?.toLowerCase() === 'stasochec';
 
-  // Handle File Select
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -88,27 +85,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
     let mediaUrl: string | undefined = undefined;
     let mediaType: string | undefined = undefined;
 
-    if (selectedFile) {
+    if (selectedFile && user && isSupabaseConfigured()) {
       setIsUploading(true);
       try {
-        if (isSupabaseConfigured() && user) {
-          const fileExt = selectedFile.name.split('.').pop();
-          const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-          const filePath = `${user.id}/${fileName}`;
+        const fileExt = selectedFile.name.split('.').pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = `${user.id}/${fileName}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from('chat-media')
-            .upload(filePath, selectedFile);
+        const { error: uploadError } = await supabase.storage
+          .from('chat-media')
+          .upload(filePath, selectedFile);
 
-          if (!uploadError) {
-            const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
-            mediaUrl = data.publicUrl;
-            mediaType = selectedFile.type.startsWith('image/') ? 'image' : 'file';
-          }
+        if (!uploadError) {
+          const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
+          mediaUrl = data.publicUrl;
+          mediaType = selectedFile.type.startsWith('image/') ? 'image' : 'file';
         } else {
-          // In demo or offline mode, use base64 / blob preview
-          mediaUrl = previewUrl || undefined;
-          mediaType = 'image';
+          console.error('Storage upload error:', uploadError.message);
         }
       } catch (err) {
         console.error('Media upload error:', err);
@@ -138,7 +131,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
       {/* 1. CHAT HEADER */}
       <header className="h-14 sm:h-16 px-3.5 sm:px-5 flex items-center justify-between bg-white dark:bg-[#18181C] border-b border-[#E4E4E7] dark:border-[#26262F] z-10 select-none shadow-xs">
         <div className="flex items-center gap-3 min-w-0">
-          {/* Mobile Back Button */}
           <button
             onClick={onBack}
             className="md:hidden p-1.5 -ml-1 rounded-xl text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-[#25252E] transition-colors"
@@ -146,7 +138,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          {/* Avatar */}
           <Avatar
             name={chatTitle}
             src={chatAvatar}
@@ -154,7 +145,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
             isOnline={activeChat.type === 'direct' && Boolean(activeChat.other_user)}
           />
 
-          {/* Title & Badges & Status */}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
               <h3 className="font-extrabold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 truncate">
@@ -163,6 +153,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
               {activeChat.other_user && (
                 <UserBadges
                   role={activeChat.other_user.role}
+                  username={activeChat.other_user.username}
                   isVerified={activeChat.other_user.is_verified}
                   hasVozduxPlus={activeChat.other_user.has_vozdux_plus}
                   customTitle={activeChat.other_user.custom_title}
@@ -186,10 +177,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* Action icons */}
         <div className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
           <div
-            title="Все сообщения в этом чате исчезнут через 14 дней с момента отправки"
+            title="Все сообщения автоматически удаляются ровно через 14 дней"
             className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-500/10 text-[#FF7A00] border border-orange-500/20"
           >
             <Clock className="w-3.5 h-3.5" />
@@ -200,7 +190,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
 
       {/* 2. MESSAGES STREAM */}
       <div className="flex-1 overflow-y-auto py-3 px-1 sm:px-2 flex flex-col space-y-1">
-        {messages.length === 0 ? (
+        {isLoadingMessages ? (
+          <div className="flex-1 flex items-center justify-center text-xs text-zinc-400 gap-2">
+            <span className="w-4 h-4 border-2 border-[#FF7A00] border-t-transparent rounded-full animate-spin" />
+            <span>Загрузка сообщений...</span>
+          </div>
+        ) : messages.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center select-none">
             <div className="w-16 h-16 rounded-2xl bg-orange-500/10 flex items-center justify-center text-[#FF7A00] mb-3">
               <Clock className="w-8 h-8" />
@@ -209,7 +204,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
               Здесь пока нет сообщений
             </h4>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-xs">
-              Напишите первое сообщение! Оно будет защищено и автоматически исчезнет ровно через 14 дней.
+              Отправьте первое сообщение! Оно будет сохранено на 14 дней и автоматически удалится.
             </p>
           </div>
         ) : (
@@ -226,7 +221,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 3. ATTACHMENT PREVIEW (if selected) */}
+      {/* 3. ATTACHMENT PREVIEW */}
       {previewUrl && (
         <div className="px-4 py-2 bg-white/90 dark:bg-[#18181C]/90 border-t border-[#E4E4E7] dark:border-[#26262F] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -269,10 +264,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
         </div>
       )}
 
-      {/* 5. BOTTOM INPUT BAR (Telegram Web style) */}
+      {/* 5. BOTTOM INPUT BAR */}
       <footer className="p-2 sm:p-3 bg-white dark:bg-[#18181C] border-t border-[#E4E4E7] dark:border-[#26262F]">
         <div className="max-w-4xl mx-auto flex items-end gap-2">
-          {/* File Attachment Button */}
           <input
             type="file"
             ref={fileInputRef}
@@ -284,12 +278,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className="p-2.5 rounded-xl text-zinc-500 dark:text-zinc-400 hover:text-[#FF7A00] hover:bg-zinc-100 dark:hover:bg-[#25252E] transition-colors flex-shrink-0"
-            title="Прикрепить фото или медиа"
+            title="Прикрепить изображение"
           >
             <Paperclip className="w-5 h-5" />
           </button>
 
-          {/* Text Area */}
           <div className="flex-1 relative flex items-center bg-zinc-100 dark:bg-[#22222B] rounded-2xl border border-transparent focus-within:border-[#FF7A00] dark:focus-within:border-[#FF7A00] transition-all px-3.5 py-1.5">
             <textarea
               rows={1}
@@ -300,7 +293,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
               className="w-full bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none resize-none max-h-32 min-h-[24px] py-1 leading-relaxed"
             />
 
-            {/* Emoji toggle */}
             <button
               type="button"
               onClick={() => setShowEmojiPicker((prev) => !prev)}
@@ -310,7 +302,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onBack }) => {
             </button>
           </div>
 
-          {/* Send Button (Orange gradient Telegram round action) */}
           <button
             onClick={() => handleSend()}
             disabled={(!inputContent.trim() && !selectedFile) || isUploading}

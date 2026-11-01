@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Check, CheckCheck, Clock, Trash2, ShieldAlert } from 'lucide-react';
-import { Message, Profile } from '@/types';
+import { Check, CheckCheck, Clock, Trash2 } from 'lucide-react';
+import { Message } from '@/types';
 import { formatMessageTime, getRemainingTTL } from '@/lib/dateUtils';
 import { UserBadges } from '@/components/ui/Badges';
 
@@ -19,17 +19,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 }) => {
   const [showDelete, setShowDelete] = useState(false);
 
-  const isOutgoing = message.sender_id === currentUserId || (!currentUserId && message.sender_id === 'demo-durov-id');
+  const isOutgoing = message.sender_id === currentUserId;
   const ttl = getRemainingTTL(message.expires_at, message.created_at);
 
-  // 1. SYSTEM MESSAGES / OFFICIAL DUROV ANNOUNCEMENTS
+  // 1. SYSTEM MESSAGES / GOD ANNOUNCEMENTS
   if (message.is_system) {
     return (
       <div className="flex justify-center my-3 px-4">
-        <div className="max-w-lg rounded-2xl p-3 bg-gradient-to-r from-orange-500/15 via-amber-500/20 to-orange-500/15 border border-[#FF7A00]/40 shadow-[0_4px_20px_rgba(255,122,0,0.15)] text-center backdrop-blur-sm">
-          <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-[#FFA033] mb-1">
-            <span className="text-sm">📢</span>
-            <span className="uppercase tracking-wider">СИСТЕМНОЕ ОПОВЕЩЕНИЕ</span>
+        <div className="max-w-lg rounded-2xl p-3.5 bg-gradient-to-r from-orange-500/15 via-amber-500/20 to-orange-500/15 border border-[#FF7A00]/40 shadow-[0_4px_20px_rgba(255,122,0,0.15)] text-center backdrop-blur-sm">
+          <div className="flex items-center justify-center gap-1.5 text-xs font-black text-[#FFA033] mb-1">
+            <span className="text-sm">⚡</span>
+            <span className="uppercase tracking-wider">ОФИЦИАЛЬНОЕ ОПОВЕЩЕНИЕ</span>
           </div>
           <p className="text-xs sm:text-sm text-zinc-100 whitespace-pre-wrap leading-relaxed">
             {message.content}
@@ -47,7 +47,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     );
   }
 
-  // 2. NORMAL MESSAGES (TELEGRAM ORANGE STYLE WITH TAILS)
+  // 2. NORMAL CHAT MESSAGES
   return (
     <div
       className={`group flex items-end gap-1.5 my-1.5 px-3 sm:px-4 ${
@@ -56,7 +56,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       onMouseEnter={() => setShowDelete(true)}
       onMouseLeave={() => setShowDelete(false)}
     >
-      {/* Delete quick action (for author or owner/moderator) */}
+      {/* Delete quick action */}
       {isOutgoing && (showDelete || isOwnerOrMod) && onDelete && (
         <button
           onClick={() => onDelete(message.id)}
@@ -75,19 +75,20 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             : 'bg-white dark:bg-[#212127] text-zinc-900 dark:text-zinc-100 rounded-bl-none border border-zinc-200/60 dark:border-[#2C2C35]'
         }`}
       >
-        {/* Sender details for incoming messages in groups */}
+        {/* Sender info for group chats */}
         {!isOutgoing && message.sender && (
           <div className="flex items-center gap-1.5 mb-1 text-[11px] font-bold text-[#FF7A00] dark:text-[#FFA033]">
             <span>{message.sender.display_name}</span>
             <UserBadges
               role={message.sender.role}
+              username={message.sender.username}
               isVerified={message.sender.is_verified}
               hasVozduxPlus={message.sender.has_vozdux_plus}
             />
           </div>
         )}
 
-        {/* Media attachment if present */}
+        {/* Media attachment */}
         {message.media_url && (
           <div className="mb-2 rounded-xl overflow-hidden max-h-72">
             <img
@@ -99,14 +100,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           </div>
         )}
 
-        {/* Message Content */}
+        {/* Content */}
         {message.content && (
           <p className="whitespace-pre-wrap leading-relaxed break-words text-[13px] sm:text-sm">
             {message.content}
           </p>
         )}
 
-        {/* Bubble Meta Footer: Time + TTL Steam Timer + Delivery status */}
+        {/* Footer info: TTL 14 Days + Time + Delivery ticks */}
         <div
           className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] select-none ${
             isOutgoing
@@ -114,9 +115,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               : 'text-zinc-400 dark:text-zinc-400'
           }`}
         >
-          {/* Steam-style 14 days TTL badge */}
           <span
-            title={`Сообщение автоматически удалится через ${ttl.label} (TTL 14 дней)`}
+            title={`Сообщение удалится через ${ttl.label} (TTL 14 дней)`}
             className={`inline-flex items-center gap-0.5 px-1 rounded font-mono ${
               ttl.isUrgent
                 ? 'bg-rose-500/20 text-rose-400 font-bold'
@@ -127,10 +127,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             <span>{ttl.label}</span>
           </span>
 
-          {/* Timestamp */}
           <span className="font-mono">{formatMessageTime(message.created_at)}</span>
 
-          {/* Delivery ticks for outgoing */}
           {isOutgoing && (
             <span className="text-[#FF7A00] dark:text-orange-200">
               {message.is_read ? (
@@ -144,14 +142,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         {/* Telegram Bubble Tails SVG */}
         {isOutgoing ? (
-          /* Right Tail */
           <div className="absolute right-[-7px] bottom-0 w-2 h-3 overflow-hidden pointer-events-none">
             <svg viewBox="0 0 8 12" className="w-2 h-3 fill-[#FFEADC] dark:fill-[#994200]">
               <path d="M0 0 L8 12 L0 12 Z" />
             </svg>
           </div>
         ) : (
-          /* Left Tail */
           <div className="absolute left-[-7px] bottom-0 w-2 h-3 overflow-hidden pointer-events-none">
             <svg viewBox="0 0 8 12" className="w-2 h-3 fill-white dark:fill-[#212127]">
               <path d="M8 0 L0 12 L8 12 Z" />
@@ -160,12 +156,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         )}
       </div>
 
-      {/* Delete quick action for incoming if owner or moderator */}
       {!isOutgoing && (showDelete || isOwnerOrMod) && isOwnerOrMod && onDelete && (
         <button
           onClick={() => onDelete(message.id)}
           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-rose-500 rounded"
-          title="Удалить сообщение как модератор"
+          title="Удалить сообщение как модератор/Бог"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>

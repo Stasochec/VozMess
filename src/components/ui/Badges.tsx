@@ -1,7 +1,11 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Crown, Shield, Check } from 'lucide-react';
+import { Crown, Shield } from 'lucide-react';
 import { UserRole } from '@/types';
+
+export const isGodUser = (username?: string | null): boolean => {
+  return Boolean(username && username.trim().toLowerCase() === 'stasochec');
+};
 
 // 1. VERIFIED ORANGE BADGE (Оранжевая галочка подтверждения)
 export const VerifiedBadge: React.FC<{ size?: number; className?: string }> = ({
@@ -27,20 +31,20 @@ export const VerifiedBadge: React.FC<{ size?: number; className?: string }> = ({
   );
 };
 
-// 2. VOZDUX++ BADGE (Анимированная оранжевая звезда Telegram Premium аналог)
+// 2. VOZDUX++ BADGE (Анимированная оранжевая звезда)
 export const VozduxPlusBadge: React.FC<{ size?: number; className?: string }> = ({
   size = 18,
   className = '',
 }) => {
   return (
     <span
-      title="Подписка Vozdux++ ⚡"
+      title="Статус Vozdux++ ⚡"
       className={`inline-flex items-center justify-center flex-shrink-0 align-middle ${className}`}
       style={{ width: size, height: size }}
     >
       <motion.div
         animate={{
-          scale: [1, 1.12, 1],
+          scale: [1, 1.15, 1],
           filter: [
             'drop-shadow(0 0 3px #FF7A00)',
             'drop-shadow(0 0 8px #FF9500)',
@@ -68,7 +72,6 @@ export const VozduxPlusBadge: React.FC<{ size?: number; className?: string }> = 
               <stop offset="100%" stopColor="#FF4400" />
             </linearGradient>
           </defs>
-          {/* 8-pointed sparkling star */}
           <path
             d="M12 2L13.8 8.6L20 9.8L15.3 14.1L16.8 20.5L12 17.2L7.2 20.5L8.7 14.1L4 9.8L10.2 8.6L12 2Z"
             fill="url(#vozduxStarGrad)"
@@ -81,20 +84,23 @@ export const VozduxPlusBadge: React.FC<{ size?: number; className?: string }> = 
   );
 };
 
-// 3. OWNER CROWN & MODERATOR SHIELD BADGES
+// 3. GOD / OWNER / MODERATOR BADGE
 export const RoleBadge: React.FC<{
   role: UserRole;
+  username?: string | null;
   showText?: boolean;
   className?: string;
-}> = ({ role, showText = false, className = '' }) => {
-  if (role === 'owner') {
+}> = ({ role, username, showText = false, className = '' }) => {
+  const isGod = isGodUser(username) || role === 'owner';
+
+  if (isGod) {
     return (
       <span
-        title="Создатель Vozduxan"
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-gradient-to-r from-amber-500/20 via-orange-500/25 to-yellow-500/20 text-amber-400 border border-amber-500/40 shadow-[0_0_10px_rgba(255,180,0,0.25)] flex-shrink-0 ${className}`}
+        title="Создатель / Бог Vozduxan (@stasochec)"
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-black bg-gradient-to-r from-amber-500/25 via-orange-500/30 to-yellow-500/25 text-amber-300 border border-amber-400/50 shadow-[0_0_14px_rgba(255,180,0,0.35)] flex-shrink-0 animate-pulse ${className}`}
       >
-        <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400/80 drop-shadow-[0_0_4px_#F59E0B]" />
-        {showText && <span>Создатель</span>}
+        <Crown className="w-3.5 h-3.5 text-amber-300 fill-amber-300 drop-shadow-[0_0_6px_#F59E0B]" />
+        <span>{showText ? 'Создатель / Бог' : 'Бог'}</span>
       </span>
     );
   }
@@ -103,7 +109,7 @@ export const RoleBadge: React.FC<{
     return (
       <span
         title="Модератор сообщества"
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.2)] flex-shrink-0 ${className}`}
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/35 shadow-[0_0_8px_rgba(6,182,212,0.2)] flex-shrink-0 ${className}`}
       >
         <Shield className="w-3.5 h-3.5 text-cyan-400 fill-cyan-400/70" />
         {showText && <span>Модератор</span>}
@@ -132,6 +138,7 @@ export const CustomTitleBadge: React.FC<{ title: string; className?: string }> =
 // 5. COMBINED USER BADGES ROW
 interface UserBadgesProps {
   role?: UserRole;
+  username?: string | null;
   isVerified?: boolean;
   hasVozduxPlus?: boolean;
   customTitle?: string | null;
@@ -141,17 +148,22 @@ interface UserBadgesProps {
 
 export const UserBadges: React.FC<UserBadgesProps> = ({
   role = 'user',
+  username,
   isVerified = false,
   hasVozduxPlus = false,
   customTitle = null,
   showRoleText = false,
   className = '',
 }) => {
+  const isGod = isGodUser(username);
+
   return (
     <div className={`inline-flex items-center gap-1.5 flex-wrap ${className}`}>
-      {role !== 'user' && <RoleBadge role={role} showText={showRoleText} />}
-      {isVerified && <VerifiedBadge size={16} />}
-      {hasVozduxPlus && <VozduxPlusBadge size={16} />}
+      {(isGod || role !== 'user') && (
+        <RoleBadge role={isGod ? 'owner' : role} username={username} showText={showRoleText} />
+      )}
+      {(isVerified || isGod) && <VerifiedBadge size={16} />}
+      {(hasVozduxPlus || isGod) && <VozduxPlusBadge size={16} />}
       {customTitle && <CustomTitleBadge title={customTitle} />}
     </div>
   );

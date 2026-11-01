@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Retrieve credentials from environment or localStorage
-const getSavedCredentials = () => {
+export const getSupabaseCredentials = () => {
   const envUrl = import.meta.env.VITE_SUPABASE_URL;
   const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -14,38 +13,35 @@ const getSavedCredentials = () => {
   return { url, key };
 };
 
-const credentials = getSavedCredentials();
-
 export const isSupabaseConfigured = (): boolean => {
-  const { url, key } = getSavedCredentials();
+  const { url, key } = getSupabaseCredentials();
   return Boolean(
     url &&
     key &&
     url.startsWith('https://') &&
     url.includes('.supabase.co') &&
-    key.length > 20
+    key.length > 25
   );
 };
 
-// Fallback dummy URL to prevent createClient crashing during initial boot
-const fallbackUrl = 'https://vozduxan-placeholder.supabase.co';
-const fallbackKey = 'placeholder-anon-key-vozduxan-1234567890';
+const creds = getSupabaseCredentials();
 
-export const supabase = createClient(
-  credentials.url && credentials.url.startsWith('https://') ? credentials.url : fallbackUrl,
-  credentials.key || fallbackKey,
-  {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
+// Dummy valid URL format strictly to avoid createClient throwing during early boot before ConfigErrorScreen displays
+const validInitUrl = isSupabaseConfigured() ? creds.url : 'https://unconfigured-instance.supabase.co';
+const validInitKey = isSupabaseConfigured() ? creds.key : 'unconfigured-anon-key-placeholder-32-chars-min';
+
+export const supabase = createClient(validInitUrl, validInitKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    storageKey: 'vozduxan_auth_token',
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
     },
-    realtime: {
-      params: {
-        eventsPerSecond: 10,
-      },
-    },
-  }
-);
+  },
+});
 
 export const saveSupabaseCredentials = (url: string, key: string) => {
   localStorage.setItem('vozdux_supabase_url', url.trim());
