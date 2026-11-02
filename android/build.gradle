@@ -18,19 +18,21 @@ allprojects {
         google()
         mavenCentral()
     }
-    configurations.all {
-        resolutionStrategy {
-            force 'androidx.core:core:1.15.0'
-            force 'androidx.core:core-ktx:1.15.0'
-            force 'androidx.activity:activity:1.9.3'
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { DependencyResolveDetails details ->
+            if (details.requested.group == 'androidx.core') {
+                details.useVersion '1.15.0'
+            }
+            if (details.requested.group == 'androidx.activity') {
+                details.useVersion '1.9.3'
+            }
         }
     }
-}
-
-subprojects {
-    tasks.configureEach { task ->
-        if (task.name.toLowerCase().contains("aarmetadata")) {
-            task.enabled = false
+    afterEvaluate { p ->
+        p.tasks.configureEach { t ->
+            if (t.name.toLowerCase().contains("aarmetadata")) {
+                t.enabled = false
+            }
         }
     }
 }
