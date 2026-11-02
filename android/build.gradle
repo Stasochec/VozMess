@@ -20,10 +20,10 @@ allprojects {
     }
     configurations.configureEach {
         resolutionStrategy.eachDependency { details ->
-            if (details.requested.group == 'androidx.core') {
+            if (details.requested.group == 'androidx.core' && (details.requested.name == 'core' || details.requested.name == 'core-ktx')) {
                 details.useVersion '1.15.0'
             }
-            if (details.requested.group == 'androidx.activity') {
+            if (details.requested.group == 'androidx.activity' && (details.requested.name == 'activity' || details.requested.name == 'activity-ktx')) {
                 details.useVersion '1.9.3'
             }
         }
