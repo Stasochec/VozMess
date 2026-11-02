@@ -68,7 +68,12 @@ jobs:
         run: |
           echo "### ❌ Ошибка сборки Gradle" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
-          tail -n 120 gradle.log >> $GITHUB_STEP_SUMMARY
+          if [ -f gradle.log ]; then
+            tail -n 120 gradle.log >> $GITHUB_STEP_SUMMARY
+            while IFS= read -r line; do
+              echo "::error title=Gradle Error::$line"
+            done < <(tail -n 25 gradle.log)
+          fi
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Prepare APK artifact
