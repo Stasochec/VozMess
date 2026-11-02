@@ -146,7 +146,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             const prof = (item as unknown as { profiles: Profile }).profiles;
             if (!prof) return true;
             if (prof.is_hidden) {
-              return prof.id === user?.id || isGod;
+              return prof.id === user?.id;
             }
             return true;
           });
@@ -996,7 +996,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       <AnimatePresence>
         {contextMenu && (
           <MessageContextMenu
-            isOpen={Boolean(contextMenu)}
+            key="telegram-message-context-menu"
             message={contextMenu.message}
             position={contextMenu.position}
             isOutgoing={contextMenu.message.sender_id === user?.id}

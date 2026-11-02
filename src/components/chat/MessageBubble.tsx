@@ -88,13 +88,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   // 2. NORMAL CHAT MESSAGES
   return (
     <div
-      className={`group flex items-end gap-2 my-1.5 px-3 sm:px-4 ${
-        isOutgoing ? 'justify-end' : 'justify-start'
+      onClick={() => {
+        if (isSelectMode) onToggleSelect?.(message.id);
+      }}
+      className={`group flex items-center gap-3 my-1 px-3 sm:px-4 rounded-xl transition-colors ${
+        isSelectMode ? 'cursor-pointer hover:bg-orange-500/5 select-none' : ''
+      } ${
+        isSelectMode && isSelected ? 'bg-[#FF7A00]/10 dark:bg-[#FF7A00]/15' : ''
       }`}
       onMouseEnter={() => setShowDelete(true)}
       onMouseLeave={() => setShowDelete(false)}
     >
-      {/* Checkbox for Select Mode (Telegram style on left) */}
+      {/* Checkbox for Select Mode (Telegram style on far left) */}
       {isSelectMode && (
         <button
           type="button"
@@ -117,19 +122,24 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         </button>
       )}
 
-      {/* Delete quick action (desktop hover when not in select mode) */}
-      {!isSelectMode && isOutgoing && (showDelete || isOwnerOrMod) && onDelete && (
-        <button
-          onClick={() => onDelete(message.id)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-rose-500 rounded"
-          title="Удалить сообщение"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      )}
+      {/* Bubble alignment wrapper */}
+      <div className={`flex-1 flex items-end gap-1.5 min-w-0 ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+        {/* Delete quick action (desktop hover when not in select mode) */}
+        {!isSelectMode && isOutgoing && (showDelete || isOwnerOrMod) && onDelete && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(message.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-rose-500 rounded"
+            title="Удалить сообщение"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
 
-      {/* Bubble Container */}
-      <div
+        {/* Bubble Container */}
+        <div
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -291,13 +301,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
       {!isSelectMode && !isOutgoing && (showDelete || isOwnerOrMod) && isOwnerOrMod && onDelete && (
         <button
-          onClick={() => onDelete(message.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(message.id);
+          }}
           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-400 hover:text-rose-500 rounded"
           title="Удалить сообщение как модератор/Бог"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       )}
+      </div>
     </div>
   );
 };
