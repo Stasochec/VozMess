@@ -28,11 +28,12 @@ allprojects {
             }
         }
     }
-    afterEvaluate { project ->
-        project.tasks.configureEach { task ->
-            if (task.name.toLowerCase().contains("aarmetadata")) {
-                task.enabled = false
-            }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    graph.allTasks.each { task ->
+        if (task.name.toLowerCase().contains("aarmetadata")) {
+            task.enabled = false
         }
     }
 }

@@ -69,10 +69,10 @@ jobs:
           echo "### ❌ Ошибка сборки Gradle" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
           if [ -f gradle.log ]; then
-            tail -n 120 gradle.log >> $GITHUB_STEP_SUMMARY
+            grep -A 10 "What went wrong:" gradle.log || tail -n 40 gradle.log >> $GITHUB_STEP_SUMMARY
             while IFS= read -r line; do
               echo "::error title=Gradle Error::$line"
-            done < <(tail -n 25 gradle.log)
+            done < <(grep -A 8 "What went wrong:" gradle.log || tail -n 20 gradle.log)
           fi
           echo '```' >> $GITHUB_STEP_SUMMARY
 
