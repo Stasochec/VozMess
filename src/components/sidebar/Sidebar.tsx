@@ -224,12 +224,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between text-xs">
-                    <p className="text-zinc-500 dark:text-zinc-400 truncate text-[11px] pr-2">
+                    <p
+                      className={`truncate text-[11px] pr-2 ${
+                        chat.unread_count && chat.unread_count > 0
+                          ? 'text-zinc-900 dark:text-zinc-200 font-semibold'
+                          : 'text-zinc-500 dark:text-zinc-400'
+                      }`}
+                    >
                       {chat.last_message ? (
                         <>
-                          {chat.last_message.is_system && (
-                            <span className="text-[#FF7A00] font-semibold mr-1">⚡</span>
-                          )}
+                          {chat.last_message.is_system ? (
+                            <span className="text-[#FF7A00] font-semibold mr-1">СИСТЕМА</span>
+                          ) : chat.last_message.sender_id === profile?.id ? (
+                            <span className="text-zinc-400">Вы: </span>
+                          ) : null}
                           {chat.last_message.content || 'Медиафайл'}
                         </>
                       ) : (
@@ -238,19 +246,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </p>
 
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {ttl && !ttl.expired && (
+                      {ttl && !ttl.expired && ttl.isUrgent && (
                         <span
-                          title={`TTL 14 дней: удалится через ${ttl.label}`}
-                          className="inline-flex items-center gap-0.5 text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-orange-500/10 text-[#FF7A00] border border-orange-500/20"
+                          title={`Удалится через ${ttl.label}`}
+                          className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-500"
                         >
                           <Clock className="w-2.5 h-2.5" />
-                          <span>{ttl.label}</span>
+                          <span className="tabular-nums">{ttl.label}</span>
                         </span>
                       )}
 
                       {Boolean(chat.unread_count && chat.unread_count > 0) && (
-                        <span className="min-w-4 h-4 px-1 rounded-full bg-[#FF7A00] text-white font-bold text-[10px] flex items-center justify-center">
-                          {chat.unread_count}
+                        <span className="min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#FF7A00] text-white font-semibold text-[10px] flex items-center justify-center tabular-nums">
+                          {chat.unread_count! > 99 ? '99+' : chat.unread_count}
                         </span>
                       )}
                     </div>

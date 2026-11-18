@@ -23,10 +23,12 @@ interface ChatState {
 
   fetchChats: () => Promise<void>;
   fetchMessages: (chatId: string) => Promise<void>;
-  sendMessage: (chatId: string, content: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
+  markChatRead: (chatId: string) => Promise<void>;
+  sendMessage: (chatId: string, content: string, mediaUrl?: string, mediaType?: string, replyToId?: string | null) => Promise<void>;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   deleteMessages: (messageIds: string[]) => Promise<void>;
+  setPinnedMessage: (chatId: string, messageId: string | null) => Promise<boolean>;
   createDirectChat: (targetUser: Profile) => Promise<string | null>;
   createGroupChat: (title: string, memberIds: string[]) => Promise<string | null>;
   broadcastAnnouncement: (text: string) => Promise<{ success: boolean; error?: string }>;
@@ -36,6 +38,7 @@ interface ChatState {
   unsubscribeFromChatMessages: () => void;
   addRealtimeMessage: (message: Message) => void;
   removeRealtimeMessage: (messageId: string) => void;
+  updateRealtimeMessage: (message: Message) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -74,17 +77,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({ isLoadingChats: true });
     try {
-      // 1. Get all chats where current user is a member
-      const { data: memberRecords, error: memberErr } = await supabase
-        .from('chat_members')
-        .select(`
-          chat_id,
-          chats (*)
-        `)
-        .eq('user_id', currentUserId);
+      const [memberRes, unreadRes] = await Promise.all([
+        supabase
+          .from('chat_members')
+          .select(`
+            chat_id,
+            chats (*)
+          `)
+          .eq('user_id', currentUserId),
+        supabase.rpc('get_unread_counts'),
+      ]);
 
-      if (memberErr) throw memberErr;
+      if (memberRes.error) throw memberRes.error;
 
+      const unreadMap = new Map<string, number>();
+      for (const row of (unreadRes.data || []) as { chat_id: string; unread_count: number }[]) {
+        unreadMap.set(row.chat_id, Number(row.unread_count) || 0);
+      }
+
+      const memberRecords = memberRes.data;
       const loadedChats: Chat[] = [];
       const nowIso = new Date().toISOString();
 
@@ -122,7 +133,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...rawChat,
           last_message: lastMessage,
           other_user: otherUser,
-          unread_count: 0,
+          unread_count: unreadMap.get(rawChat.id) || 0,
         });
       }
 
@@ -180,7 +191,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessage: async (chatId: string, content: string, mediaUrl?: string, mediaType?: string) => {
+  markChatRead: async (chatId: string) => {
+    try {
+      await supabase.rpc('mark_chat_read', { p_chat_id: chatId });
+      set((state) => ({
+        chats: state.chats.map((c) => (c.id === chatId ? { ...c, unread_count: 0 } : c)),
+      }));
+    } catch (err) {
+      console.error('markChatRead failed:', err);
+    }
+  },
+
+  sendMessage: async (
+    chatId: string,
+    content: string,
+    mediaUrl?: string,
+    mediaType?: string,
+    replyToId?: string | null
+  ) => {
     const authStore = useAuthStore.getState();
     const currentUser = authStore.user;
     const currentProfile = authStore.profile;
@@ -189,6 +217,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // 14 days auto-deletion TTL expiration
     const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    const replyTarget = replyToId
+      ? get().messages.find((m) => m.id === replyToId)
+      : null;
 
     const optimisticMessage: Message = {
       id: `temp-${Date.now()}`,
@@ -201,6 +233,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       created_at: new Date().toISOString(),
       expires_at: expiresAt,
       is_read: false,
+      reply_to_id: replyToId || null,
+      reply_to: replyTarget
+        ? {
+            id: replyTarget.id,
+            content: replyTarget.content,
+            media_type: replyTarget.media_type,
+            sender: replyTarget.sender,
+          }
+        : null,
       sender: currentProfile || undefined,
     };
 
@@ -224,6 +265,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           media_url: mediaUrl || null,
           media_type: mediaType || null,
           expires_at: expiresAt,
+          reply_to_id: replyToId || null,
         })
         .select('*, sender:profiles(*)')
         .single();
@@ -239,6 +281,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .from('chats')
         .update({ updated_at: new Date().toISOString() })
         .eq('id', chatId);
+
+      get().markChatRead(chatId);
     } catch (err) {
       console.error('Failed to send message:', err);
       // Remove optimistic message if insert failed
@@ -292,6 +336,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       console.error('Failed to delete messages batch:', err);
     }
+  },
+
+  setPinnedMessage: async (chatId: string, messageId: string | null) => {
+    const { data, error } = await supabase.rpc('set_pinned_message', {
+      p_chat_id: chatId,
+      p_message_id: messageId,
+    });
+
+    if (error || !data?.success) {
+      console.error('setPinnedMessage:', error?.message || data?.error);
+      return false;
+    }
+
+    set((state) => ({
+      chats: state.chats.map((c) =>
+        c.id === chatId ? { ...c, pinned_message_id: messageId } : c
+      ),
+    }));
+    return true;
   },
 
   createDirectChat: async (targetUser: Profile) => {
@@ -640,6 +703,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   removeRealtimeMessage: (messageId: string) => {
     set((state) => ({
       messages: state.messages.filter((m) => m.id !== messageId),
+    }));
+  },
+
+  updateRealtimeMessage: (message: Message) => {
+    set((state) => ({
+      messages: state.messages.map((m) => (m.id === message.id ? { ...m, ...message } : m)),
     }));
   },
 }));

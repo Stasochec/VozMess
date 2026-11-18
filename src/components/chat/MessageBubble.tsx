@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, CheckCheck, Clock, Trash2, ZoomIn, FileText } from 'lucide-react';
+import { Check, CheckCheck, Clock, Trash2, ZoomIn, FileText, Reply } from 'lucide-react';
 import { Message, Profile } from '@/types';
 import { formatMessageTime, getRemainingTTL } from '@/lib/dateUtils';
 import { resolveMediaUrl } from '@/lib/storage';
@@ -204,6 +204,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               isVerified={message.sender.is_verified}
               hasVozduxPlus={message.sender.has_vozdux_plus}
             />
+          </div>
+        )}
+
+        {/* Reply quote (if this message is a reply) */}
+        {message.reply_to && (
+          <div className="mb-2 pl-2 border-l-2 border-[#FF7A00] bg-black/5 dark:bg-black/10 rounded py-1 px-2 text-xs">
+            <div className="flex items-center gap-1 text-[#FF7A00] font-semibold mb-0.5">
+              <Reply className="w-3 h-3" />
+              <span>{message.reply_to.sender?.display_name || 'Пользователь'}</span>
+            </div>
+            <p className="text-zinc-600 dark:text-zinc-400 truncate">
+              {message.reply_to.content || (message.reply_to.media_type ? 'Медиафайл' : '...')}
+            </p>
           </div>
         )}
 

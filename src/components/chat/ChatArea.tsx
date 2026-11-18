@@ -55,6 +55,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     editMessage,
     deleteMessage,
     deleteMessages,
+    setPinnedMessage: setPinnedMessageDb,
     isLoadingMessages,
   } = useChatStore();
   const { user, profile } = useAuthStore();
@@ -100,11 +101,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [replyingMessage, setReplyingMessage] = useState<Message | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
+  const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
+  const typingTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const lastTypingSentRef = useRef(0);
 
   const activeChat = chats.find((c) => c.id === activeChatId);
 
@@ -173,6 +177,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     const channelName = `chat_messages_${activeChatId}_${Date.now()}`;
     const channel = supabase
       .channel(channelName)
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (!payload || payload.user_id === user?.id) return;
+        if (payload.chat_id !== activeChatId) return;
+
+        setTypingUsers((prev) => ({ ...prev, [payload.user_id]: payload.display_name }));
+        clearTimeout(typingTimersRef.current[payload.user_id]);
+        typingTimersRef.current[payload.user_id] = setTimeout(() => {
+          setTypingUsers((prev) => {
+            const next = { ...prev };
+            delete next[payload.user_id];
+            return next;
+          });
+        }, 4000);
+      })
       .on(
         'postgres_changes',
         {
@@ -251,6 +269,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Mark chat as read whenever it is opened or a new message arrives
+  useEffect(() => {
+    if (activeChatId) {
+      useChatStore.getState().markChatRead(activeChatId);
+    }
+  }, [activeChatId, messages.length]);
+
+  // Load the pinned message from the chat record
+  useEffect(() => {
+    if (!activeChat?.pinned_message_id) {
+      setPinnedMessage(null);
+      return;
+    }
+    const pinned = messages.find((m) => m.id === activeChat.pinned_message_id);
+    setPinnedMessage(pinned || null);
+  }, [activeChat?.pinned_message_id, messages]);
 
   // Process and compress chosen file (from input, paste, or drag & drop)
   const processSelectedFile = async (file: File) => {
@@ -340,6 +375,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setInputContent(e.target.value);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+
+    // Throttled typing broadcast: at most once every 2.5s per user
+    const now = Date.now();
+    if (e.target.value && activeChatId && channelRef.current) {
+      const lastSent = lastTypingSentRef.current;
+      if (now - lastSent > 2500) {
+        lastTypingSentRef.current = now;
+        channelRef.current.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: {
+            chat_id: activeChatId,
+            user_id: user?.id,
+            display_name: profile?.display_name || profile?.username,
+          },
+        });
+      }
+    }
   };
 
   // Context Menu Actions
@@ -493,16 +546,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       soundEffects.playSent();
     }
 
-    // Handle reply prefix if quoting another message
-    let finalContent = inputContent.trim();
-    if (replyingMessage) {
-      const author = replyingMessage.sender?.display_name || 'сообщение';
-      const quote = (replyingMessage.content || 'Вложение').slice(0, 45);
-      finalContent = `↩️ В ответ ${author}: «${quote}»\n${finalContent}`;
-      setReplyingMessage(null);
-    }
-
-    await sendMessage(activeChat.id, finalContent, mediaUrl, mediaType);
+    await sendMessage(
+      activeChat.id,
+      inputContent.trim(),
+      mediaUrl,
+      mediaType,
+      replyingMessage?.id ?? null
+    );
+    setReplyingMessage(null);
     setInputContent('');
     handleClearAttachment();
 
@@ -676,7 +727,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
           </div>
           <button
-            onClick={() => setPinnedMessage(null)}
+            onClick={async () => {
+              if (!activeChat) return;
+              await setPinnedMessageDb(activeChat.id, null);
+              setPinnedMessage(null);
+            }}
             className="p-1 rounded text-zinc-400 hover:text-white transition-colors"
             title="Открепить"
           >
@@ -726,6 +781,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             />
           ))
         )}
+
+        {/* Typing indicator */}
+        {Object.keys(typingUsers).length > 0 && (
+          <div className="flex items-center gap-2 px-3 sm:px-4 py-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <span className="flex gap-0.5">
+              <span className="w-1 h-1 rounded-full bg-zinc-400 animate-bounce [animation-delay:0ms]" />
+              <span className="w-1 h-1 rounded-full bg-zinc-400 animate-bounce [animation-delay:150ms]" />
+              <span className="w-1 h-1 rounded-full bg-zinc-400 animate-bounce [animation-delay:300ms]" />
+            </span>
+            <span className="truncate">
+              {Object.values(typingUsers).slice(0, 2).join(', ')}
+              {Object.keys(typingUsers).length > 2 ? ' и другие' : ''} печатает…
+            </span>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -1004,7 +1075,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             onClose={() => setContextMenu(null)}
             onReply={handleStartReply}
             onEdit={handleStartEdit}
-            onPin={(msg) => setPinnedMessage(msg)}
+            onPin={async (msg) => {
+              if (!activeChat) return;
+              await setPinnedMessageDb(activeChat.id, msg.id);
+            }}
             onDelete={(id) => deleteMessage(id)}
             onSelect={handleStartSelect}
             onReact={async (msg, emoji) => {

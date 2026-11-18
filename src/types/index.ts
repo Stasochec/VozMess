@@ -37,6 +37,14 @@ export interface Message {
   created_at: string;
   expires_at: string;
   is_read: boolean;
+  edited_at?: string | null;
+  reply_to_id?: string | null;
+  reply_to?: {
+    id: string;
+    content: string | null;
+    media_type?: string | null;
+    sender?: Profile | null;
+  } | null;
   sender?: Profile;
 }
 
@@ -48,6 +56,7 @@ export interface Chat {
   avatar_url?: string | null;
   created_by?: string | null;
   is_private?: boolean;
+  pinned_message_id?: string | null;
   created_at: string;
   updated_at: string;
   last_message?: Message | null;
