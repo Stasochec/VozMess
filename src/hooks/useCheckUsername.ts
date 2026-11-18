@@ -98,29 +98,14 @@ export const useCheckUsername = (
           check_username: cleanUsername,
         });
 
-        // Stale check: ignore if component unmounted or another query started
-        if (!isCurrent || currentRequestId !== latestRequestIdRef.current) {
+        if (error) {
+          console.warn('RPC check_username_available warning:', error.message);
+          setStatus('idle');
+          setMessage('Не удалось проверить никнейм');
           return;
         }
 
-        if (error) {
-          console.warn('RPC check_username_available warning:', error.message);
-          // Fallback check via query if RPC fails
-          const { data: existingUser } = await supabase
-            .from('profiles')
-            .select('id')
-            .ilike('username', cleanUsername)
-            .maybeSingle();
-
-          if (!isCurrent || currentRequestId !== latestRequestIdRef.current) return;
-
-          if (existingUser && (!currentUserId || existingUser.id !== currentUserId)) {
-            setStatus('taken');
-            setMessage('Этот юзернейм уже занят');
-          } else {
-            setStatus('available');
-            setMessage(`@${cleanUsername.toLowerCase()} свободен`);
-          }
+        if (!isCurrent || currentRequestId !== latestRequestIdRef.current) {
           return;
         }
 

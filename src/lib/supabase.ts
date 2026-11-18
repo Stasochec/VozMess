@@ -1,14 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 
 export const getSupabaseCredentials = () => {
-  const envUrl = import.meta.env.VITE_SUPABASE_URL;
-  const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  const url = (import.meta.env.VITE_SUPABASE_URL || '').trim();
+  const key = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
-  const localUrl = typeof window !== 'undefined' ? localStorage.getItem('vozdux_supabase_url') : null;
-  const localKey = typeof window !== 'undefined' ? localStorage.getItem('vozdux_supabase_key') : null;
-
-  const url = (localUrl || envUrl || '').trim();
-  const key = (localKey || envKey || '').trim();
+  // Retired build-time escape hatch: localStorage used to be able to replace the
+  // backend URL and key, which let a crafted link point the app at attacker Supabase.
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('vozdux_supabase_url');
+      localStorage.removeItem('vozdux_supabase_key');
+    } catch {
+      // storage may be unavailable; nothing to clean up
+    }
+  }
 
   return { url, key };
 };
@@ -42,15 +47,3 @@ export const supabase = createClient(validInitUrl, validInitKey, {
     },
   },
 });
-
-export const saveSupabaseCredentials = (url: string, key: string) => {
-  localStorage.setItem('vozdux_supabase_url', url.trim());
-  localStorage.setItem('vozdux_supabase_key', key.trim());
-  window.location.reload();
-};
-
-export const clearSupabaseCredentials = () => {
-  localStorage.removeItem('vozdux_supabase_url');
-  localStorage.removeItem('vozdux_supabase_key');
-  window.location.reload();
-};

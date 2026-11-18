@@ -77,19 +77,13 @@ function MessengerScreen() {
         if (match && match[1]) {
           const targetGroupId = match[1];
           try {
-            const { data: member } = await supabase
-              .from('chat_members')
-              .select('id')
-              .eq('chat_id', targetGroupId)
-              .eq('user_id', user.id)
-              .maybeSingle();
+            const { data: joined } = await supabase.rpc('join_group_by_link', {
+              p_chat_id: targetGroupId,
+            });
 
-            if (!member) {
-              await supabase.from('chat_members').insert({
-                chat_id: targetGroupId,
-                user_id: user.id,
-                role: 'member',
-              });
+            if (!joined) {
+              console.warn('Group is private or unavailable for joining');
+              return;
             }
 
             await fetchChats();

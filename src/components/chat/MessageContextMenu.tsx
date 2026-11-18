@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Message } from '@/types';
 import { formatChatDate, formatMessageTime } from '@/lib/dateUtils';
+import { resolveMediaUrl } from '@/lib/storage';
 
 interface MessageContextMenuProps {
   message: Message;
@@ -93,16 +94,22 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
     onClose();
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (message.media_url) {
-      if (onSaveMedia) onSaveMedia(message.media_url);
-      else {
-        const link = document.createElement('a');
-        link.href = message.media_url;
-        link.download = `media_${Date.now()}`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+      if (onSaveMedia) {
+        onSaveMedia(message.media_url);
+      } else {
+        const url = await resolveMediaUrl(message.media_url);
+        if (url) {
+          const link = document.createElement('a');
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.download = `media_${Date.now()}`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
       }
     }
     onClose();

@@ -33,6 +33,7 @@ import { useSettingsStore } from '@/store/useSettingsStore';
 import { usePresenceStore } from '@/store/usePresenceStore';
 import { soundEffects } from '@/lib/soundUtils';
 import { formatLastSeen } from '@/lib/dateUtils';
+import { CHAT_MEDIA_BUCKET, buildMediaPath } from '@/lib/storage';
 import { AnimatePresence } from 'framer-motion';
 
 interface ChatAreaProps {
@@ -457,13 +458,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       try {
         const fileExt = selectedFile.name.split('.').pop() || 'webp';
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `${user.id}/${fileName}`;
+        const filePath = buildMediaPath(activeChat.id, user.id, fileName);
 
         const { error: uploadError } = await supabase.storage
-          .from('chat-media')
+          .from(CHAT_MEDIA_BUCKET)
           .upload(filePath, selectedFile, {
             contentType: selectedFile.type,
-            upsert: true,
+            upsert: false,
           });
 
         if (uploadError) {
@@ -475,8 +476,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           return;
         }
 
-        const { data } = supabase.storage.from('chat-media').getPublicUrl(filePath);
-        mediaUrl = data.publicUrl;
+        mediaUrl = filePath;
         mediaType = selectedFile.type.startsWith('image/') ? 'image' : 'file';
       } catch (err: unknown) {
         console.error('Media upload error:', err);

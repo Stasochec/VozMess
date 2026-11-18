@@ -82,7 +82,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
       URL.revokeObjectURL(blobUrl);
     } catch {
       // Fallback: direct window open
-      window.open(mediaUrl, '_blank');
+      window.open(mediaUrl ?? undefined, '_blank');
     }
   };
 

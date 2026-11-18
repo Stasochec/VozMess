@@ -4,6 +4,8 @@ import { Chat, Message, Profile } from '@/types';
 import { useAuthStore } from './useAuthStore';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
+let subscribedChatSignature = '';
+
 interface ChatState {
   chats: Chat[];
   activeChatId: string | null;
@@ -132,6 +134,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
 
       set({ chats: loadedChats });
+
+      get().subscribeToRealtime();
 
       // Automatically select first chat if none is active on desktop
       if (!get().activeChatId && loadedChats.length > 0 && window.innerWidth >= 768) {
@@ -409,7 +413,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const { data: newChat, error: chatErr } = await supabase
         .from('chats')
-        .insert({ type: 'group', title: title.trim(), created_by: currentUserId })
+        .insert({ type: 'group', title: title.trim(), created_by: currentUserId, is_private: true })
         .select()
         .single();
 
@@ -475,17 +479,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
   subscribeToRealtime: () => {
     if (!isSupabaseConfigured()) return;
 
+    const chatIds = get().chats.map((c) => c.id);
+    if (chatIds.length === 0) {
+      get().unsubscribeFromRealtime();
+      return;
+    }
+
+    const signature = chatIds.join(',');
+    if (subscribedChatSignature === signature) return;
+
     get().unsubscribeFromRealtime();
 
-    const channel = supabase
-      .channel('vozduxan_global_stream')
-      .on(
+    // One channel per chat the user actually belongs to. A single unfiltered
+    // table subscription relied on Realtime honouring RLS and pulled every
+    // message event into the client.
+    const channel = supabase.channel('vozduxan_sidebar_stream');
+
+    for (const chatId of chatIds) {
+      channel.on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `chat_id=eq.${chatId}` },
         async (payload) => {
           const newMsg = payload.new as Message;
+          if (!get().chats.some((c) => c.id === newMsg.chat_id)) return;
 
-          // Fetch sender profile info for sidebar preview
           const { data: senderProfile } = await supabase
             .from('profiles')
             .select('*')
@@ -497,7 +514,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
             sender: senderProfile || undefined,
           };
 
-          // Update sidebar chat list
           set((state) => ({
             chats: state.chats.map((c) =>
               c.id === newMsg.chat_id
@@ -506,17 +522,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ),
           }));
         }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'messages' },
-        (payload) => {
-          const deletedId = payload.old.id;
-          get().removeRealtimeMessage(deletedId);
-        }
-      )
-      .subscribe();
+      );
+    }
 
+    channel.subscribe();
+    subscribedChatSignature = signature;
     set({ realtimeSubscription: channel });
   },
 
@@ -524,6 +534,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { realtimeSubscription } = get();
     if (realtimeSubscription) {
       supabase.removeChannel(realtimeSubscription);
+      subscribedChatSignature = '';
       set({ realtimeSubscription: null });
     }
   },

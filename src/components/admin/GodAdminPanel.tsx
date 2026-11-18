@@ -100,10 +100,8 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Strict God check: only @stasochec or role 'owner'
-  const isGod =
-    profile?.username?.trim().toLowerCase() === 'stasochec' ||
-    profile?.role === 'owner';
+  // Strict God check: database role only — usernames carry no privileges.
+  const isGod = profile?.role === 'owner';
 
   // Physical return null if modal is closed OR if user is not God
   if (!isOpen || !isGod) {
@@ -200,14 +198,16 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     if (!targetUser) return;
     const nextVal = !targetUser.has_vozdux_plus;
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ has_vozdux_plus: nextVal })
-      .eq('id', targetUser.id);
+    const { data, error } = await supabase.rpc('admin_update_user', {
+      p_user_id: targetUser.id,
+      p_has_vozdux_plus: nextVal,
+    });
 
-    if (!error) {
+    if (!error && data?.success) {
       setTargetUser({ ...targetUser, has_vozdux_plus: nextVal });
       showNotification(`Vozdux++ ${nextVal ? 'активирован' : 'отключен'} для @${targetUser.username}`);
+    } else {
+      showNotification(data?.error || error?.message || 'Не удалось изменить статус');
     }
   };
 
@@ -216,14 +216,16 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     if (!targetUser) return;
     const nextVal = !targetUser.is_verified;
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_verified: nextVal })
-      .eq('id', targetUser.id);
+    const { data, error } = await supabase.rpc('admin_update_user', {
+      p_user_id: targetUser.id,
+      p_is_verified: nextVal,
+    });
 
-    if (!error) {
+    if (!error && data?.success) {
       setTargetUser({ ...targetUser, is_verified: nextVal });
       showNotification(`Статус Verified ${nextVal ? 'выдан' : 'снят'} для @${targetUser.username}`);
+    } else {
+      showNotification(data?.error || error?.message || 'Не удалось изменить статус');
     }
   };
 
@@ -232,30 +234,34 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
     if (!targetUser) return;
     const nextRole: UserRole = targetUser.role === 'moderator' ? 'user' : 'moderator';
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ role: nextRole })
-      .eq('id', targetUser.id);
+    const { data, error } = await supabase.rpc('admin_update_user', {
+      p_user_id: targetUser.id,
+      p_role: nextRole,
+    });
 
-    if (!error) {
+    if (!error && data?.success) {
       setTargetUser({ ...targetUser, role: nextRole });
       showNotification(`Роль @${targetUser.username} изменена на: ${nextRole}`);
+    } else {
+      showNotification(data?.error || error?.message || 'Не удалось изменить роль');
     }
   };
 
   // Save Custom Title
   const handleSaveCustomTitle = async () => {
     if (!targetUser) return;
-    const titleVal = customTitleInput.trim() || null;
+    const titleVal = customTitleInput.trim();
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ custom_title: titleVal })
-      .eq('id', targetUser.id);
+    const { data, error } = await supabase.rpc('admin_update_user', {
+      p_user_id: targetUser.id,
+      p_custom_title: titleVal,
+    });
 
-    if (!error) {
-      setTargetUser({ ...targetUser, custom_title: titleVal });
+    if (!error && data?.success) {
+      setTargetUser({ ...targetUser, custom_title: titleVal || null });
       showNotification(`Кастомный титул сохранен для @${targetUser.username}`);
+    } else {
+      showNotification(data?.error || error?.message || 'Не удалось сохранить титул');
     }
   };
 
@@ -283,32 +289,11 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
             ? `👻 Аккаунт @${targetUser.username} теперь СКРЫТ для всех (кроме вас и модераторов)`
             : `👁️ Аккаунт @${targetUser.username} снова видим для всех пользователей`
         );
-        return;
+      } else {
+        showNotification(data?.error || error?.message || 'Не удалось изменить видимость');
       }
     } catch (e) {
-      console.warn('RPC admin_set_user_hidden fallback:', e);
-    }
-
-    // Direct update fallback (Owner policy permits update)
-    const { error: updateErr } = await supabase
-      .from('profiles')
-      .update({ is_hidden: nextVal })
-      .eq('id', targetUser.id);
-
-    if (!updateErr) {
-      setTargetUser({ ...targetUser, is_hidden: nextVal });
-      showNotification(
-        nextVal
-          ? `👻 Аккаунт @${targetUser.username} теперь СКРЫТ для всех (кроме вас и модераторов)`
-          : `👁️ Аккаунт @${targetUser.username} снова видим для всех пользователей`
-      );
-    } else {
-      if (updateErr.message?.includes('is_hidden') || updateErr.message?.includes('schema cache')) {
-        setSearchError('Колонка "is_hidden" еще не создана в Supabase. Запустите SQL-скрипт в Supabase SQL Editor.');
-        alert('В базе Supabase еще нет колонки is_hidden. Выполните скрипт в Supabase SQL Editor:\n\nALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE;\nNOTIFY pgrst, \'reload schema\';');
-      } else {
-        setSearchError(updateErr.message || 'Ошибка обновления статуса видимости');
-      }
+      console.warn('RPC admin_set_user_hidden failed:', e);
     }
   };
 
@@ -345,21 +330,8 @@ export const GodAdminPanel: React.FC<GodAdminPanelProps> = ({ isOpen, onClose })
       });
 
       if (error || !data?.success) {
-        const { error: updErr } = await supabase
-          .from('profiles')
-          .update({ is_hidden: nextVal })
-          .eq('id', userRecord.id);
-
-        if (updErr) {
-          if (updErr.message?.includes('is_hidden') || updErr.message?.includes('schema cache')) {
-            setGhostError(
-              'Колонка is_hidden еще не создана в Supabase. Выполните в SQL Editor: ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE; NOTIFY pgrst, \'reload schema\';'
-            );
-          } else {
-            setGhostError(updErr.message);
-          }
-          return;
-        }
+        setGhostError(data?.error || error?.message || 'Не удалось изменить видимость');
+        return;
       }
 
       showNotification(

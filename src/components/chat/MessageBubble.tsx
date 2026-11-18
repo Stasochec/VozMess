@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, CheckCheck, Clock, Trash2, ZoomIn, FileText } from 'lucide-react';
 import { Message, Profile } from '@/types';
 import { formatMessageTime, getRemainingTTL } from '@/lib/dateUtils';
+import { resolveMediaUrl } from '@/lib/storage';
 import { UserBadges } from '@/components/ui/Badges';
 import { useSettingsStore } from '@/store/useSettingsStore';
 
@@ -37,7 +38,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onOpenContextMenu,
 }) => {
   const [showDelete, setShowDelete] = useState(false);
+  const [resolvedMediaUrl, setResolvedMediaUrl] = useState<string | null>(null);
   const { fontSize } = useSettingsStore();
+
+  useEffect(() => {
+    let cancelled = false;
+    resolveMediaUrl(message.media_url).then((url) => {
+      if (!cancelled) setResolvedMediaUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [message.media_url]);
 
   const isOutgoing = message.sender_id === currentUserId;
   const ttl = getRemainingTTL(message.expires_at, message.created_at);
@@ -207,7 +217,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 return;
               }
               onOpenMedia?.(
-                message.media_url!,
+                resolvedMediaUrl || message.media_url!,
                 message.media_type,
                 message.content,
                 message.sender?.display_name,
@@ -225,10 +235,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   <span className="text-[10px] text-zinc-400">Нажмите для просмотра</span>
                 </div>
               </div>
-            ) : (
+            ) : resolvedMediaUrl ? (
               <>
                 <img
-                  src={message.media_url}
+                  src={resolvedMediaUrl}
                   alt="Вложение"
                   className="w-full max-h-80 sm:max-h-96 object-contain rounded-xl transition-transform duration-200 group-hover/img:scale-[1.01]"
                   loading="lazy"
@@ -239,6 +249,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   </div>
                 </div>
               </>
+            ) : (
+              <div className="p-3 flex items-center gap-2.5 bg-black/10 dark:bg-black/30 rounded-xl">
+                <FileText className="w-6 h-6 text-zinc-500" />
+                <span className="text-xs text-zinc-400">Вложение недоступно</span>
+              </div>
             )}
           </div>
         )}

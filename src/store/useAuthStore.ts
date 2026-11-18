@@ -19,30 +19,6 @@ interface AuthState {
   clearError: () => void;
 }
 
-function normalizeProfile(p: Profile | null, userId?: string): Profile | null {
-  if (!p) return null;
-  if (p.username?.toLowerCase() === 'stasochec') {
-    const isAlreadyGod = p.role === 'owner' && p.is_verified && p.has_vozdux_plus;
-    p.role = 'owner';
-    p.is_verified = true;
-    p.has_vozdux_plus = true;
-    p.custom_title = p.custom_title || 'Создатель';
-    if (!isAlreadyGod && userId && isSupabaseConfigured()) {
-      supabase
-        .from('profiles')
-        .update({
-          role: 'owner',
-          is_verified: true,
-          has_vozdux_plus: true,
-          custom_title: p.custom_title,
-        })
-        .eq('id', userId)
-        .then();
-    }
-  }
-  return p;
-}
-
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   profile: null,
@@ -78,7 +54,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .maybeSingle();
 
         if (profileData) {
-          set({ profile: normalizeProfile(profileData, session.user.id) });
+          set({ profile: profileData });
         } else if (profileErr) {
           console.error('Failed to fetch profile:', profileErr.message);
         }
@@ -96,7 +72,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             .maybeSingle();
 
           if (profileData) {
-            set({ profile: normalizeProfile(profileData, newSession.user.id) });
+            set({ profile: profileData });
           }
         } else if (event === 'SIGNED_OUT') {
           set({ user: null, profile: null, session: null });
@@ -118,68 +94,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     try {
-      let targetEmail = identifier.trim();
-
-      // If user provided username instead of email (no @ character)
-      if (!targetEmail.includes('@')) {
-        const cleanUsername = targetEmail.replace(/^@/, '').toLowerCase();
-
-        // 1. Call RPC function get_email_by_username
-        const { data: foundEmail, error: rpcErr } = await supabase.rpc('get_email_by_username', {
-          p_username: cleanUsername,
-        });
-
-        if (rpcErr || !foundEmail) {
-          set({ isSubmitting: false, error: 'Пользователь с таким ником не найден' });
-          return { error: 'Пользователь с таким ником не найден' };
-        }
-        targetEmail = foundEmail;
-      }
-
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: targetEmail,
+        email: identifier.trim(),
         password,
       });
 
       if (error) {
-        // Если аккаунт завис в состоянии "Email not confirmed", пробуем автоподтвердить через RPC register_user_direct
-        if (
-          error.message?.toLowerCase().includes('not confirmed') ||
-          error.message?.toLowerCase().includes('email_not_confirmed')
-        ) {
-          console.warn('Аккаунт не подтвержден, пробуем подтвердить через register_user_direct...');
-          const { data: rpcRes } = await supabase.rpc('register_user_direct', {
-            p_email: targetEmail,
-            p_password: password,
-            p_username: '',
-            p_display_name: '',
-          });
-
-          if (rpcRes?.success) {
-            const { data: retryData, error: retryErr } = await supabase.auth.signInWithPassword({
-              email: targetEmail,
-              password,
-            });
-
-            if (!retryErr && retryData?.user) {
-              const { data: profileData } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', retryData.user.id)
-                .maybeSingle();
-
-              set({
-                user: retryData.user,
-                session: retryData.session,
-                profile: profileData,
-                isSubmitting: false,
-                error: null,
-              });
-              return { success: true };
-            }
-          }
-        }
-
         set({ isSubmitting: false, error: error.message });
         return { error: error.message };
       }
@@ -194,7 +114,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: data.user,
           session: data.session,
-          profile: normalizeProfile(profileData, data.user.id),
+          profile: profileData,
           isSubmitting: false,
           error: null,
         });
@@ -235,7 +155,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return { error: `Никнейм @${cleanUsername} уже занят другим пользователем` };
       }
 
-      // 2. Perform Supabase Sign Up with fallback to direct RPC on rate limit
       let targetUserId: string | null = null;
       let activeSession: Session | null = null;
 
@@ -251,53 +170,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (error) {
-        // Проверяем ошибку email rate limit или статус 429
-        const isRateLimit =
-          error.message?.toLowerCase().includes('rate limit') ||
-          error.message?.toLowerCase().includes('email rate') ||
-          (error as { status?: number }).status === 429;
-
-        if (isRateLimit) {
-          console.warn('Обнаружен лимит email в Supabase, используем прямой RPC register_user_direct...');
-          const { data: rpcRes, error: rpcErr } = await supabase.rpc('register_user_direct', {
-            p_email: email.trim(),
-            p_password: password,
-            p_username: cleanUsername,
-            p_display_name: displayName.trim() || cleanUsername,
-          });
-
-          if (!rpcErr && rpcRes?.success) {
-            targetUserId = rpcRes.user_id;
-
-            // Сразу авторизуемся с подтвержденным паролем
-            const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
-              email: email.trim(),
-              password,
-            });
-
-            if (signInErr) {
-              set({ isSubmitting: false, error: signInErr.message });
-              return { error: signInErr.message };
-            }
-
-            activeSession = signInData.session;
-            targetUserId = signInData.user?.id || targetUserId;
-          } else {
-            const errDetails = rpcRes?.error || rpcErr?.message;
-            const userMsg = errDetails
-              ? `Ошибка регистрации: ${errDetails}`
-              : 'Лимит отправки писем в Supabase. Отключите "Confirm email" в панели Supabase (Authentication -> Providers -> Email).';
-            set({ isSubmitting: false, error: userMsg });
-            return { error: userMsg };
-          }
-        } else {
-          set({ isSubmitting: false, error: error.message });
-          return { error: error.message };
-        }
-      } else {
-        targetUserId = data.user?.id || null;
-        activeSession = data.session;
+        set({ isSubmitting: false, error: error.message });
+        return { error: error.message };
       }
+
+      targetUserId = data.user?.id || null;
+      activeSession = data.session;
 
       // 3. Если сессия не вернулась сразу, выполняем вход
       if (!activeSession) {
@@ -310,29 +188,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           activeSession = signInData.session;
           targetUserId = signInData.user?.id || targetUserId;
         } else if (signInErr) {
-          // Если аккаунт заблокирован на неподтвержденном email, пробуем автоподтвердить
-          if (
-            signInErr.message?.toLowerCase().includes('not confirmed') ||
-            signInErr.message?.toLowerCase().includes('email_not_confirmed')
-          ) {
-            const { data: rpcRes } = await supabase.rpc('register_user_direct', {
-              p_email: email.trim(),
-              p_password: password,
-              p_username: cleanUsername,
-              p_display_name: displayName.trim() || cleanUsername,
-            });
-
-            if (rpcRes?.success) {
-              const { data: retrySignIn } = await supabase.auth.signInWithPassword({
-                email: email.trim(),
-                password,
-              });
-              if (retrySignIn?.session) {
-                activeSession = retrySignIn.session;
-                targetUserId = retrySignIn.user?.id || targetUserId;
-              }
-            }
-          }
+          set({ isSubmitting: false, error: signInErr.message });
+          return { error: signInErr.message };
         }
       }
 
@@ -356,7 +213,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: activeSession?.user || (data?.user ?? null),
           session: activeSession,
-          profile: normalizeProfile(loadedProfile, targetUserId),
+          profile: loadedProfile,
           isSubmitting: false,
           error: null,
         });
