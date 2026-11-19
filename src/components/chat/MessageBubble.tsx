@@ -12,6 +12,7 @@ interface MessageBubbleProps {
   isOwnerOrMod?: boolean;
   isSelectMode?: boolean;
   isSelected?: boolean;
+  isRead?: boolean;
   onToggleSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
   onOpenUserProfile?: (user: Profile) => void;
@@ -23,6 +24,8 @@ interface MessageBubbleProps {
     createdAt?: string
   ) => void;
   onOpenContextMenu?: (e: React.MouseEvent, message: Message) => void;
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  allMessages?: Message[];
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({
@@ -31,12 +34,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   isOwnerOrMod = false,
   isSelectMode = false,
   isSelected = false,
+  isRead = false,
   onToggleSelect,
+  onToggleReaction,
   onDelete,
   onOpenUserProfile,
   onOpenMedia,
   onOpenContextMenu,
+  allMessages,
 }) => {
+  const repliedTo = message.reply_to || null;
   const [showDelete, setShowDelete] = useState(false);
   const [resolvedMediaUrl, setResolvedMediaUrl] = useState<string | null>(null);
   const { fontSize } = useSettingsStore();
@@ -69,16 +76,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         className={`flex justify-center my-3 px-4 ${isSelectMode ? 'cursor-pointer' : ''}`}
       >
         <div
-          className={`max-w-lg rounded-2xl p-3.5 bg-gradient-to-r from-orange-500/15 via-amber-500/20 to-orange-500/15 border shadow-[0_4px_20px_rgba(255,122,0,0.15)] text-center backdrop-blur-sm transition-all ${
+          className={`max-w-lg rounded-xl px-3.5 py-2.5 bg-[#FF7A00]/10 border text-center transition-all ${
             isSelected
-              ? 'border-[#FF7A00] ring-2 ring-[#FF7A00] shadow-[0_0_15px_rgba(255,122,0,0.35)]'
-              : 'border-[#FF7A00]/40'
+              ? 'border-[#FF7A00] ring-2 ring-[#FF7A00]'
+              : 'border-[#FF7A00]/30'
           }`}
         >
-          <div className="flex items-center justify-center gap-1.5 text-xs font-black text-[#FFA033] mb-1">
-            <span className="text-sm">⚡</span>
-            <span className="uppercase tracking-wider">ОФИЦИАЛЬНОЕ ОПОВЕЩЕНИЕ</span>
-          </div>
+          <div className="text-[11px] font-semibold text-[#FF7A00] mb-1">Объявление</div>
           <p className="text-xs sm:text-sm text-zinc-100 whitespace-pre-wrap leading-relaxed">
             {message.content}
           </p>
@@ -286,23 +290,21 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               : 'text-zinc-400 dark:text-zinc-400'
           }`}
         >
-          <span
-            title={`Сообщение удалится через ${ttl.label} (TTL 14 дней)`}
-            className={`inline-flex items-center gap-0.5 px-1 rounded font-mono ${
-              ttl.isUrgent
-                ? 'bg-rose-500/20 text-rose-400 font-bold'
-                : 'opacity-85'
-            }`}
-          >
-            <Clock className="w-2.5 h-2.5" />
-            <span>{ttl.label}</span>
-          </span>
+          {ttl.isUrgent && !ttl.expired && (
+            <span
+              title={`Сообщение удалится через ${ttl.label}`}
+              className="inline-flex items-center gap-0.5 px-1 rounded bg-rose-500/15 text-rose-500"
+            >
+              <Clock className="w-2.5 h-2.5" />
+              <span className="tabular-nums">{ttl.label}</span>
+            </span>
+          )}
 
           <span className="font-mono">{formatMessageTime(message.created_at)}</span>
 
           {isOutgoing && (
-            <span className="text-[#FF7A00] dark:text-orange-200">
-              {message.is_read ? (
+            <span className={isRead ? 'text-[#FF7A00] dark:text-orange-200' : 'opacity-60'}>
+              {isRead ? (
                 <CheckCheck className="w-3.5 h-3.5" />
               ) : (
                 <Check className="w-3.5 h-3.5" />
@@ -310,6 +312,30 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             </span>
           )}
         </div>
+
+        {/* Reactions */}
+        {message.reactions && message.reactions.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {message.reactions.map((r) => (
+              <button
+                key={r.emoji}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleReaction?.(message.id, r.emoji);
+                }}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors ${
+                  r.reacted_by_me
+                    ? 'bg-[#FF7A00] text-white'
+                    : 'bg-black/10 dark:bg-white/10 text-zinc-700 dark:text-zinc-200 hover:bg-black/15 dark:hover:bg-white/15'
+                }`}
+              >
+                <span>{r.emoji}</span>
+                <span className="tabular-nums font-medium">{r.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Message Bubble Tails SVG */}
         {isOutgoing ? (

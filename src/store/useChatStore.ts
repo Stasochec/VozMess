@@ -16,6 +16,7 @@ interface ChatState {
   activeFilter: 'all' | 'direct' | 'group' | 'channel';
   realtimeSubscription: RealtimeChannel | null;
   activeChatChannel: RealtimeChannel | null;
+  othersReadAt: string | null;
 
   setActiveChatId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
@@ -29,6 +30,9 @@ interface ChatState {
   deleteMessage: (messageId: string) => Promise<void>;
   deleteMessages: (messageIds: string[]) => Promise<void>;
   setPinnedMessage: (chatId: string, messageId: string | null) => Promise<boolean>;
+  toggleReaction: (messageId: string, emoji: string) => Promise<void>;
+  loadReactions: (chatId: string) => Promise<void>;
+  loadReadState: (chatId: string) => Promise<void>;
   createDirectChat: (targetUser: Profile) => Promise<string | null>;
   createGroupChat: (title: string, memberIds: string[]) => Promise<string | null>;
   broadcastAnnouncement: (text: string) => Promise<{ success: boolean; error?: string }>;
@@ -51,6 +55,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeFilter: 'all',
   realtimeSubscription: null,
   activeChatChannel: null,
+  othersReadAt: null,
 
   setActiveChatId: (id) => {
     const prevId = get().activeChatId;
@@ -171,15 +176,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const nowIso = new Date().toISOString();
 
       // Auto-deletion TTL: Only load messages whose 14-day lifetime has not expired
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('messages')
         .select(`
           *,
-          sender:profiles(*)
+          sender:profiles!messages_sender_id_fkey(*),
+          reply_to:messages!messages_reply_to_id_fkey(id, content, media_type, sender:profiles!messages_sender_id_fkey(*))
         `)
         .eq('chat_id', chatId)
         .gt('expires_at', nowIso)
         .order('created_at', { ascending: true });
+
+      // Fall back to a plain query when features_patch.sql has not been applied yet
+      if (error) {
+        console.warn('Reply join failed, using plain query:', error.message);
+        ({ data, error } = await supabase
+          .from('messages')
+          .select('*, sender:profiles(*)')
+          .eq('chat_id', chatId)
+          .gt('expires_at', nowIso)
+          .order('created_at', { ascending: true }));
+      }
 
       if (error) throw error;
       set({ messages: data || [] });
@@ -256,19 +273,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      const { data, error } = await supabase
+      const basePayload = {
+        chat_id: chatId,
+        sender_id: currentUser.id,
+        content: content.trim() || null,
+        media_url: mediaUrl || null,
+        media_type: mediaType || null,
+        expires_at: expiresAt,
+      };
+
+      let { data, error } = await supabase
         .from('messages')
-        .insert({
-          chat_id: chatId,
-          sender_id: currentUser.id,
-          content: content.trim() || null,
-          media_url: mediaUrl || null,
-          media_type: mediaType || null,
-          expires_at: expiresAt,
-          reply_to_id: replyToId || null,
-        })
+        .insert({ ...basePayload, reply_to_id: replyToId || null })
         .select('*, sender:profiles(*)')
         .single();
+
+      // Reply support needs features_patch.sql; keep messages flowing without it.
+      if (error && replyToId && /reply_to_id|schema cache/i.test(error.message)) {
+        console.warn('reply_to_id column missing — applying features_patch.sql is required');
+        ({ data, error } = await supabase
+          .from('messages')
+          .insert(basePayload)
+          .select('*, sender:profiles(*)')
+          .single());
+      }
 
       if (error) throw error;
 
@@ -335,6 +363,72 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await supabase.from('messages').delete().in('id', messageIds);
     } catch (err) {
       console.error('Failed to delete messages batch:', err);
+    }
+  },
+
+  loadReadState: async (chatId: string) => {
+    const myId = useAuthStore.getState().user?.id;
+    const { data } = await supabase
+      .from('chat_members')
+      .select('last_read_at')
+      .eq('chat_id', chatId)
+      .neq('user_id', myId || '');
+
+    if (!data || data.length === 0) {
+      set({ othersReadAt: null });
+      return;
+    }
+    // A message counts as read only when every other member has read past it
+    const earliest = data
+      .map((r) => new Date(r.last_read_at).getTime())
+      .reduce((a, b) => Math.min(a, b));
+    set({ othersReadAt: new Date(earliest).toISOString() });
+  },
+
+  loadReactions: async (chatId: string) => {
+    const { data, error } = await supabase.rpc('get_chat_reactions', { p_chat_id: chatId });
+    if (error || !data) return;
+
+    const byMessage = new Map<string, { emoji: string; count: number; reacted_by_me: boolean }[]>();
+    for (const row of data as { message_id: string; emoji: string; count: number; reacted_by_me: boolean }[]) {
+      const list = byMessage.get(row.message_id) || [];
+      list.push({ emoji: row.emoji, count: Number(row.count), reacted_by_me: row.reacted_by_me });
+      byMessage.set(row.message_id, list);
+    }
+
+    set((state) => ({
+      messages: state.messages.map((m) => ({ ...m, reactions: byMessage.get(m.id) || [] })),
+    }));
+  },
+
+  toggleReaction: async (messageId: string, emoji: string) => {
+    // Optimistic update so the chip responds instantly
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        const list = [...(m.reactions || [])];
+        const idx = list.findIndex((r) => r.emoji === emoji);
+        if (idx === -1) {
+          list.push({ emoji, count: 1, reacted_by_me: true });
+        } else if (list[idx].reacted_by_me) {
+          if (list[idx].count <= 1) list.splice(idx, 1);
+          else list[idx] = { ...list[idx], count: list[idx].count - 1, reacted_by_me: false };
+        } else {
+          list[idx] = { ...list[idx], count: list[idx].count + 1, reacted_by_me: true };
+        }
+        return { ...m, reactions: list };
+      }),
+    }));
+
+    const { data, error } = await supabase.rpc('toggle_reaction', {
+      p_message_id: messageId,
+      p_emoji: emoji,
+    });
+
+    if (error || !data?.success) {
+      console.error('toggleReaction:', error?.message || data?.error);
+      const chatId = get().activeChatId;
+      if (chatId) get().loadReactions(chatId);
     }
   },
 

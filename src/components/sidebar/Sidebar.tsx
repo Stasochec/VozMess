@@ -413,7 +413,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* Drawer Footer with Sign Out */}
               <div className="p-4 border-t border-[#E4E4E7] dark:border-[#282833] space-y-2">
                 <div className="text-[10px] text-zinc-400 text-center">
-                  Vozduxan Web • TTL 14 Days
+                  Vozduxan
                 </div>
 
                 <button

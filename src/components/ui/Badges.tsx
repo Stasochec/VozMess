@@ -1,6 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { Crown, Shield } from 'lucide-react';
+import { Crown, Shield, EyeOff } from 'lucide-react';
 import { UserRole } from '@/types';
 
 export const isGodUser = (username?: string | null): boolean => {
@@ -31,55 +30,35 @@ export const VerifiedBadge: React.FC<{ size?: number; className?: string }> = ({
   );
 };
 
-// 2. VOZDUX++ BADGE (Анимированная оранжевая звезда)
+// 2. VOZDUX++ BADGE — a quiet gradient glyph, no pulsing or neon glow
 export const VozduxPlusBadge: React.FC<{ size?: number; className?: string }> = ({
   size = 18,
   className = '',
 }) => {
   return (
     <span
-      title="Статус Vozdux++ ⚡"
+      title="Статус Vozdux++"
       className={`inline-flex items-center justify-center flex-shrink-0 align-middle ${className}`}
       style={{ width: size, height: size }}
     >
-      <motion.div
-        animate={{
-          scale: [1, 1.15, 1],
-          filter: [
-            'drop-shadow(0 0 3px #FF7A00)',
-            'drop-shadow(0 0 8px #FF9500)',
-            'drop-shadow(0 0 3px #FF7A00)',
-          ],
-        }}
-        transition={{
-          repeat: Infinity,
-          duration: 2.2,
-          ease: 'easeInOut',
-        }}
-        className="flex items-center justify-center"
+      <svg
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
       >
-        <svg
-          viewBox="0 0 24 24"
-          width={size}
-          height={size}
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <defs>
-            <linearGradient id="vozduxStarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#FFAA00" />
-              <stop offset="50%" stopColor="#FF7A00" />
-              <stop offset="100%" stopColor="#FF4400" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M12 2L13.8 8.6L20 9.8L15.3 14.1L16.8 20.5L12 17.2L7.2 20.5L8.7 14.1L4 9.8L10.2 8.6L12 2Z"
-            fill="url(#vozduxStarGrad)"
-            stroke="#FFF4EB"
-            strokeWidth="0.8"
-          />
-        </svg>
-      </motion.div>
+        <defs>
+          <linearGradient id="vozduxPlusGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FF9500" />
+            <stop offset="100%" stopColor="#FF5500" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M12 2L13.8 8.6L20 9.8L15.3 14.1L16.8 20.5L12 17.2L7.2 20.5L8.7 14.1L4 9.8L10.2 8.6L12 2Z"
+          fill="url(#vozduxPlusGrad)"
+        />
+      </svg>
     </span>
   );
 };
@@ -96,11 +75,11 @@ export const RoleBadge: React.FC<{
   if (isGod) {
     return (
       <span
-        title="Создатель / Бог Vozduxan (@stasochec)"
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-black bg-gradient-to-r from-amber-500/25 via-orange-500/30 to-yellow-500/25 text-amber-300 border border-amber-400/50 shadow-[0_0_14px_rgba(255,180,0,0.35)] flex-shrink-0 animate-pulse ${className}`}
+        title="Создатель Vozduxan"
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-semibold bg-amber-500/15 text-amber-500 flex-shrink-0 ${className}`}
       >
-        <Crown className="w-3.5 h-3.5 text-amber-300 fill-amber-300 drop-shadow-[0_0_6px_#F59E0B]" />
-        <span>{showText ? 'Создатель / Бог' : 'Бог'}</span>
+        <Crown className="w-3.5 h-3.5" />
+        <span>{showText ? 'Создатель' : ''}</span>
       </span>
     );
   }
@@ -108,10 +87,10 @@ export const RoleBadge: React.FC<{
   if (role === 'moderator') {
     return (
       <span
-        title="Модератор сообщества"
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-500/15 text-cyan-400 border border-cyan-500/35 shadow-[0_0_8px_rgba(6,182,212,0.2)] flex-shrink-0 ${className}`}
+        title="Модератор"
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-semibold bg-sky-500/15 text-sky-500 flex-shrink-0 ${className}`}
       >
-        <Shield className="w-3.5 h-3.5 text-cyan-400 fill-cyan-400/70" />
+        <Shield className="w-3.5 h-3.5" />
         {showText && <span>Модератор</span>}
       </span>
     );
@@ -139,10 +118,10 @@ export const CustomTitleBadge: React.FC<{ title: string; className?: string }> =
 export const HiddenBadge: React.FC<{ className?: string }> = ({ className = '' }) => {
   return (
     <span
-      title="Скрытый профиль (Ghost Mode) — невидим для обычных пользователей"
-      className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/35 shadow-[0_0_8px_rgba(168,85,247,0.3)] ${className}`}
+      title="Скрытый профиль"
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-zinc-500/15 text-zinc-400 ${className}`}
     >
-      <span>👻</span>
+      <EyeOff className="w-3 h-3" />
       <span>Скрыт</span>
     </span>
   );

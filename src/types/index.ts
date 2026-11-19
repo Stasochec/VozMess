@@ -39,6 +39,7 @@ export interface Message {
   is_read: boolean;
   edited_at?: string | null;
   reply_to_id?: string | null;
+  reactions?: { emoji: string; count: number; reacted_by_me: boolean }[];
   reply_to?: {
     id: string;
     content: string | null;

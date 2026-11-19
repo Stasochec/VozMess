@@ -56,6 +56,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     deleteMessage,
     deleteMessages,
     setPinnedMessage: setPinnedMessageDb,
+    toggleReaction,
+    loadReactions,
+    loadReadState,
+    othersReadAt,
     isLoadingMessages,
   } = useChatStore();
   const { user, profile } = useAuthStore();
@@ -194,6 +198,25 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       .on(
         'postgres_changes',
         {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'chat_members',
+          filter: `chat_id=eq.${activeChatId}`,
+        },
+        () => {
+          useChatStore.getState().loadReadState(activeChatId);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'message_reactions' },
+        () => {
+          useChatStore.getState().loadReactions(activeChatId);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
@@ -274,6 +297,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   useEffect(() => {
     if (activeChatId) {
       useChatStore.getState().markChatRead(activeChatId);
+    }
+  }, [activeChatId, messages.length]);
+
+  // Load reactions when the chat or its message set changes
+  useEffect(() => {
+    if (activeChatId && messages.length > 0) {
+      loadReactions(activeChatId);
+    }
+  }, [activeChatId, messages.length]);
+
+  // Track when other members last read this chat (drives the double checkmark)
+  useEffect(() => {
+    if (activeChatId) {
+      loadReadState(activeChatId);
     }
   }, [activeChatId, messages.length]);
 
@@ -590,12 +627,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         <div className="p-8 rounded-3xl bg-white/70 dark:bg-[#16161C]/70 backdrop-blur-md border border-zinc-200/50 dark:border-zinc-800/50 max-w-sm flex flex-col items-center shadow-lg">
           <Logo size="lg" variant="full" />
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4 leading-relaxed">
-            Выберите диалог в списке слева или начните новый. Все сообщения защищены и автоматически
-            удаляются через 14 дней.
+            Выберите диалог в списке слева или начните новый. Сообщения автоматически удаляются
+            через 14 дней.
           </p>
-          <div className="mt-4 px-3 py-1 rounded-full bg-orange-500/10 text-[#FF7A00] text-[11px] font-semibold border border-orange-500/20">
-            ⚡ Vozduxan Protocol • TTL 14 Days
-          </div>
         </div>
       </div>
     );
@@ -700,17 +734,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 ) : (
                   `${groupMemberCount !== null ? groupMemberCount : 1} ${
                     groupMemberCount === 1 ? 'участник' : 'участников'
-                  } • нажми для настроек ⚙️`
+                  }`
                 )}
               </p>
             </div>
           </div>
-        </div>
-
-        {/* TTL 14 Days Indicator */}
-        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-500/10 text-[#FF7A00] text-xs font-mono font-bold border border-orange-500/20">
-          <Clock className="w-3.5 h-3.5" />
-          <span>TTL 14 Дней</span>
         </div>
       </header>
 
@@ -766,8 +794,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               isOwnerOrMod={isOwnerOrMod}
               isSelectMode={isSelectMode}
               isSelected={selectedMessageIds.has(msg.id)}
+              allMessages={messages}
               onToggleSelect={handleToggleSelect}
               onDelete={deleteMessage}
+              isRead={Boolean(othersReadAt && new Date(msg.created_at) <= new Date(othersReadAt))}
+              onToggleReaction={toggleReaction}
               onOpenUserProfile={onOpenUserProfile}
               onOpenMedia={(url, type, caption, senderName, createdAt) =>
                 setViewingMedia({ url, type, caption, senderName, createdAt })
@@ -1083,8 +1114,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             onSelect={handleStartSelect}
             onReact={async (msg, emoji) => {
               if (sendSoundEnabled) soundEffects.playSent();
-              // Optionally send reaction or quick reply
-              await sendMessage(activeChat.id, `${emoji}`);
+              await toggleReaction(msg.id, emoji);
             }}
           />
         )}
